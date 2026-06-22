@@ -1,0 +1,59 @@
+{# Plantilla para impresión de ticket estilo térmico #}
+<div class="ticket-container" style="font-family: 'Courier New', Courier, monospace; width: 300px; padding: 10px; border: 1px solid #ccc; background-color: white; color: black;">
+    
+    <h3 style="text-align: center; margin: 0; text-transform: uppercase;">
+        {{ nombre_empresa }}
+    </h3>
+    
+    <p style="text-align: center; margin: 5px 0; font-weight: bold;">
+        PEDIDO #{{ pedido.id_pedido }}
+    </p>
+    
+    <hr style="border-top: 1px dashed #000;">
+    
+    <div style="font-size: 14px;">
+        <p style="margin: 3px 0;"><strong>Cliente:</strong> {{ pedido.cliente_nombre }} {{ pedido.cliente_apellido }}</p>
+        <p style="margin: 3px 0;"><strong>Dirección:</strong> {{ pedido.direccion_entrega }}</p>
+        <p style="margin: 3px 0;"><strong>Entrega:</strong> {{ pedido.horario_entrega.strftime('%H:%M') }} hs</p>
+    </div>
+    
+    <hr style="border-top: 1px dashed #000;">
+    
+    <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tbody>
+            {% for item in pedido.items %}
+            <tr>
+                <td style="padding: 5px 0; line-height: 1.2;">
+                    <strong>{{ item.cantidad }} x {{ item.plato_nombre }}</strong>
+                    {% if item.detalles %}
+                        <br><small style="color: #444; font-style: italic;">&nbsp;&nbsp;↳ {{ item.detalles }}</small>
+                    {% endif %}
+                </td>
+                <td style="text-align: right; vertical-align: top;">
+                    ${{ "%.2f"|format(item.precio_unitario * item.cantidad) }}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    
+    <hr style="border-top: 1px dashed #000;">
+    
+    <div style="font-size: 14px;">
+        <p style="margin: 5px 0;">Subtotal: <span style="float: right;">${{ "%.2f"|format(pedido.costo_total - pedido.costo_envio) }}</span></p>
+        <p style="margin: 5px 0;">Envío: <span style="float: right;">${{ "%.2f"|format(pedido.costo_envio) }}</span></p>
+        <h4 style="margin: 10px 0; border-top: 1px solid #000; padding-top: 5px;">
+            TOTAL: <span style="float: right;">${{ "%.2f"|format(pedido.costo_total) }}</span>
+        </h4>
+    </div>
+    
+    <hr style="border-top: 1px dashed #000;">
+    
+    <p style="text-align: center; margin-bottom: 0;">
+        <strong>PAGO: {{ pedido.forma_pago|upper }}</strong>
+    </p>
+    
+    {% if pedido.estado_pago == 'Pagado' %}
+        <p style="text-align: center; margin-top: 0; font-size: 12px;">[ COMPROBANTE PAGADO ]</p>
+    {% endif %}
+</div>

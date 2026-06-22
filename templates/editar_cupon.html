@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Editar Cupón{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <div class="card shadow-lg border-0 rounded-4">
+                <div class="card-body p-5">
+                    <h3 class="fw-bold mb-4 text-center">Editar Cupón</h3>
+                    
+                    <form action="{{ url_for('editar_cupon', id_cupon=cupon.id_cupon) }}" method="POST">
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Código del Cupón</label>
+                            <input type="text" name="codigo" class="form-control form-control-lg text-uppercase" 
+                                   value="{{ cupon.codigo }}" required>
+                        </div>
+
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Tipo</label>
+                                <select name="tipo" class="form-select">
+                                    <option value="porcentaje" {% if cupon.tipo == 'porcentaje' %}selected{% endif %}>Porcentaje (%)</option>
+                                    <option value="monto" {% if cupon.tipo == 'monto' %}selected{% endif %}>Monto Fijo ($)</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Valor</label>
+                                <input type="number" step="0.01" name="valor" class="form-control" value="{{ cupon.valor }}" required>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">Mínimo de Compra ($)</label>
+                            <input type="number" step="0.01" name="minimo_compra" class="form-control" value="{{ cupon.minimo_compra }}">
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-primary btn-lg rounded-pill fw-bold">Guardar Cambios</button>
+                            <a href="{{ url_for('gestion_cupones') }}" class="btn btn-link text-muted">Cancelar</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

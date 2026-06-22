@@ -3,94 +3,285 @@
 {% block title %}Gestión de Pedidos{% endblock %}
 
 {% block content %}
-    <h1 class="mb-4">Gestión de Pedidos</h1>
+<div class="container-fluid pb-5">
+    <!-- Encabezado Principal -->
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-3">
+        <h1 class="fw-bold h2 mb-0 text-dark">
+            <i class="fas fa-clipboard-list text-primary me-2"></i>Panel de Control de Pedidos
+        </h1>
+        <button class="btn btn-primary btn-lg rounded-pill px-4 shadow-sm fw-bold" onclick="window.location.reload();">
+            <i class="fas fa-sync-alt me-2"></i>Actualizar Pedidos
+        </button>
+    </div>
+    <!-- BARRA DE FILTROS -->
+    <div class="card mb-4 shadow-sm border-0">
+        <div class="card-body bg-light rounded">
+            <!-- El method="GET" es vital para que los filtros se vean en la URL -->
+            <form method="GET" action="{{ url_for('gestion_pedidos') }}">
+                <div class="row align-items-end">
+                    
+                    <div class="col-md-3 mb-3 mb-md-0">
+                        <label class="form-label small fw-bold">Estado de Envío</label>
+                        <select name="f_envio" class="form-select">
+                            <option value="">-- Todos --</option>
+                            <option value="Pendiente de WhatsApp" {% if f_envio == 'Pendiente de WhatsApp' %}selected{% endif %}>Pendiente de WhatsApp</option>
+                            <option value="Recibido" {% if f_envio == 'Recibido' %}selected{% endif %}>Recibido</option>
+                            <option value="En Preparación" {% if f_envio == 'En Preparación' %}selected{% endif %}>En Cocina</option>
+                            <option value="En Camino" {% if f_envio == 'En Camino' %}selected{% endif %}>En Camino</option>
+                            <option value="Entregado" {% if f_envio == 'Entregado' %}selected{% endif %}>Entregado</option>
+                            <option value="Cancelado" {% if f_envio == 'Cancelado' %}selected{% endif %}>Cancelado</option>
+                        </select>
+                    </div>
 
-    <div class="card shadow-sm">
-        <div class="card-header">
-            <h5>Pedidos Recientes</h5>
-        </div>
-        <div class="card-body">
-            {% if pedidos %}
-            <div class="table-responsive">
-                <table class="table table-striped table-hover">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Cliente</th>
-                            <th>Dirección</th>
-                            <th>Tipo Pedido</th> 
-                            <th>Horario</th>
-                            <th>Pago</th>
-                            <th>Total</th>
-                            <th>Estado</th>
-                            <th>Repartidor</th> {# <-- Aquí es donde se mostrará el selector o el nombre #}
-                            <th>Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for pedido in pedidos %}
-                        <tr>
-                            <td>{{ pedido.id_pedido }}</td>
-                            <td>{{ pedido.cliente_nombre }} {{ pedido.cliente_apellido }}</td>
-                            <td>{{ pedido.direccion_entrega }}</td>
-                            <td>
-                                {% if pedido.es_envio %}
-                                    <span class="badge bg-primary">Envío</span>
-                                {% else %}
-                                    <span class="badge bg-secondary">Retiro</span>
-                                {% endif %}
-                            </td>
-                            <td>{{ pedido.horario_entrega_dt.strftime('%d/%m %H:%M') }}</td>
-                            <td>{{ pedido.forma_pago }}</td>
-                            <td>${{ "{:,.2f}".format(pedido.costo_total) }}</td>
-                            <td>
-                                {% if pedido.estado_pago == 'Pagado' %}
-                                    <span class="badge bg-success">{{ pedido.estado_pago }}</span>
-                                {% else %}
-                                    <span class="badge bg-warning text-dark">{{ pedido.estado_pago }}</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if pedido.es_envio %}
-                                    {% if pedido.repartidor_nombre %}
-                                        {# Si ya tiene repartidor asignado, solo lo mostramos #}
-                                        {{ pedido.repartidor_nombre }} {{ pedido.repartidor_apellido }}
-                                    {% else %}
-                                        {# Si es envío y NO tiene repartidor, mostramos el selector para asignarlo #}
-                                        <form action="{{ url_for('asignar_repartidor', id_pedido=pedido.id_pedido) }}" method="POST" class="d-flex">
-                                            <select name="id_repartidor" class="form-select form-select-sm me-1" required>
-                                                <option value="">Asignar...</option>
-                                                {% for rep in repartidores %}
-                                                    {# La consulta en app.py ya filtra por activo=1, así que esta condición es redundante pero no dañina #}
-                                                    <option value="{{ rep.id_repartidor }}">{{ rep.nombre }} {{ rep.apellido }}</option>
-                                                {% else %}
-                                                    {# Este bloque se ejecuta si 'repartidores' está vacía #}
-                                                    <option value="" disabled>No hay repartidores activos.</option>
-                                                {% endfor %}
-                                            </select>
-                                            <button type="submit" class="btn btn-sm btn-primary">Asignar</button>
-                                        </form>
-                                    {% endif %}
-                                {% else %}
-                                    N/A {# Si no es envío, no aplica repartidor #}
-                                {% endif %}
-                            </td>
-                            <td>
-                                <a href="{{ url_for('detalle_pedido', id_pedido=pedido.id_pedido) }}" class="btn btn-sm btn-info me-2">Ver Detalle</a>
-                                {% if pedido.estado_pago != 'Pagado' %}
-                                    <form action="{{ url_for('marcar_pedido_pagado', id_pedido=pedido.id_pedido) }}" method="POST" style="display:inline;" onsubmit="return confirm('¿Marcar pedido #{{ pedido.id_pedido }} como pagado?');">
-                                        <button type="submit" class="btn btn-sm btn-success">Marcar Pagado</button>
-                                    </form>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-                <p class="text-center text-muted">No hay pedidos registrados.</p>
-            {% endif %}
+                    <div class="col-md-3 mb-3 mb-md-0">
+                        <label class="form-label small fw-bold">Estado de Pago</label>
+                        <select name="f_pago" class="form-select">
+                            <option value="">-- Todos --</option>
+                            <option value="Pendiente" {% if f_pago == 'Pendiente' %}selected{% endif %}>Pendiente</option>
+                            <option value="Pagado" {% if f_pago == 'Pagado' %}selected{% endif %}>Pagado</option>
+                        </select>
+                    </div>
+
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-primary px-3">
+                            <i class="fas fa-search me-1"></i> Filtrar
+                        </button>
+                        <a href="{{ url_for('gestion_pedidos') }}" class="btn btn-outline-secondary px-3 ms-2">
+                            <i class="fas fa-undo me-1"></i> Limpiar
+                        </a>
+                    </div>
+                    
+                </div>
+            </form>
         </div>
     </div>
+
+    {# --- ALERTAS DE STOCK BAJO --- #}
+    {% if alertas_stock %}
+    <div class="alert alert-warning border-0 shadow-sm rounded-4 mb-4 p-3">
+        <div class="d-flex align-items-center">
+            <div class="bg-warning text-dark rounded-circle p-2 me-3">
+                <i class="fas fa-exclamation-triangle fa-lg"></i>
+            </div>
+            <div>
+                <span class="fw-bold d-block h6 mb-1">Insumos Críticos (Reponer Pronto):</span>
+                <div class="d-flex flex-wrap gap-2">
+                    {% for alerta in alertas_stock %}
+                        <span class="badge bg-danger shadow-sm px-3 py-2">
+                            <i class="fas fa-box me-1"></i> {{ alerta.nombre }}: {{ alerta.stock_actual|int }}
+                        </span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# --- VISTA PARA PC (TABLET/ESCRITORIO) --- #}
+    <div class="card shadow-lg border-0 rounded-4 d-none d-md-block overflow-hidden">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="bg-dark text-white">
+                    <tr class="text-uppercase small">
+                        <th class="ps-4 py-3">ID / Hora Entrega</th>
+                        <th class="py-3">Cliente y Dirección</th>
+                        <th class="py-3">Monto Total</th>
+                        <th class="py-3">Estado Pago</th>
+                        <th class="py-3">Estado Envío</th>
+                        <th class="py-3">Repartidor</th>
+                        <th class="text-center pe-4 py-3">Acciones Rápidas</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white">
+                    {% for pedido in pedidos %}
+                    <tr style="border-bottom: 1px solid #f0f0f0;">
+                        <!-- ID y HORA -->
+                        <td class="ps-4">
+                            <div class="badge bg-light text-dark border mb-1">#{{ pedido.id_pedido }}</div>
+                            <div class="h5 fw-bold text-danger mb-0">
+                                <i class="far fa-clock me-1"></i>{{ pedido.horario_entrega_dt.strftime('%H:%M') if pedido.horario_entrega_dt else pedido.horario_entrega }}
+                            </div>
+                        </td>
+                        <!-- CLIENTE -->
+                        <td>
+                            <div class="fw-bold text-dark fs-6">{{ pedido.cliente_nombre }} {{ pedido.cliente_apellido }}</div>
+                            <div class="small text-muted">
+                                <i class="fas fa-map-marker-alt me-1 text-danger"></i>{{ pedido.direccion_entrega }}
+                            </div>
+                        </td>
+                        <!-- TOTAL -->
+                        <td>
+                            <div class="fw-bold text-success fs-5">${{ "{:,.2f}".format(pedido.costo_total) }}</div>
+                        </td>
+                        <!-- PAGO -->
+                        <td>
+                            {% if pedido.estado_pago == 'Pagado' %}
+                                <span class="badge bg-success px-3 py-2 shadow-sm">
+                                    <i class="fas fa-check-circle me-1"></i>{{ pedido.estado_pago }}
+                                </span>
+                            {% else %}
+                                <span class="badge bg-warning text-dark px-3 py-2 shadow-sm">
+                                    <i class="fas fa-hourglass-half me-1"></i>{{ pedido.estado_pago }}
+                                </span>
+                            {% endif %}
+                        </td>
+                        <!-- ENVIO -->
+                        <td>
+                            <span class="badge rounded-pill px-3 py-2 shadow-sm
+                                {% if pedido.estado_envio == 'Pendiente de WhatsApp' %}bg-primary
+                                {% elif pedido.estado_envio == 'Entregado' %}bg-success
+                                {% elif pedido.estado_envio == 'En Camino' %}bg-danger
+                                {% elif pedido.estado_envio == 'En Cocina' %}bg-info
+                                {% else %}bg-secondary{% endif %}">
+                                {{ pedido.estado_envio }}
+                            </span>
+                        </td>
+                        <!-- REPARTIDOR -->
+                        <td>
+                            {% if pedido.es_envio %}
+                                {% if pedido.rep_n %}
+                                    <div class="fw-bold small text-dark">
+                                        <i class="fas fa-motorcycle me-1 text-primary"></i>{{ pedido.rep_n }}
+                                    </div>
+                                {% else %}
+                                    <form action="{{ url_for('asignar_repartidor', id_pedido=pedido.id_pedido) }}" method="POST" class="d-flex align-items-center">
+                                        <select name="id_repartidor" class="form-select form-select-sm border-primary" style="width: 110px; font-size: 0.8rem;" required>
+                                            <option value="">Asignar...</option>
+                                            {% for rep in repartidores %}
+                                                <option value="{{ rep.id_repartidor }}">{{ rep.nombre }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        <button type="submit" class="btn btn-sm btn-primary ms-1"><i class="fas fa-check"></i></button>
+                                    </form>
+                                {% endif %}
+                            {% else %}
+                                <span class="text-muted small italic">Retira Cliente</span>
+                            {% endif %}
+                        </td>
+                        <!-- ACCIONES -->
+                        <td class="text-center pe-4">
+                            <div class="d-flex justify-content-center gap-1">
+                                {% if pedido.estado_envio == 'Pendiente de WhatsApp' %}
+                                    <form action="{{ url_for('confirmar_whatsapp', id_pedido=pedido.id_pedido) }}" method="POST">
+                                        <button type="submit" class="btn btn-primary btn-sm px-3 fw-bold shadow-sm" title="Confirmar Pedido">
+                                            <i class="fab fa-whatsapp me-1"></i> CONFIRMAR
+                                        </button>
+                                    </form>
+                                {% endif %}
+
+                                {% if pedido.estado_pago != 'Pagado' %}
+                                    <form action="{{ url_for('marcar_pedido_pagado', id_pedido=pedido.id_pedido) }}" method="POST">
+                                        <button type="submit" class="btn btn-success btn-sm px-3 fw-bold shadow-sm" title="Marcar Pagado">
+                                            <i class="fas fa-dollar-sign me-1"></i> PAGAR
+                                        </button>
+                                    </form>
+                                {% endif %}
+
+                                <a href="{{ url_for('detalle_pedido', id_pedido=pedido.id_pedido) }}" class="btn btn-info btn-sm text-white px-3 fw-bold shadow-sm" title="Ver Detalle">
+                                    <i class="fas fa-eye me-1"></i> VER
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    {# --- VISTA PARA CELULAR (CARDS) --- #}
+    <div class="d-md-none">
+        {% for pedido in pedidos %}
+        <div class="card mb-3 shadow border-0 rounded-4 overflow-hidden {% if pedido.estado_envio == 'Pendiente de WhatsApp' %}border-start border-5 border-primary{% endif %}">
+            <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <span class="badge bg-light text-dark border">#{{ pedido.id_pedido }}</span>
+                    <span class="fw-bold text-danger h5 mb-0">
+                        <i class="far fa-clock me-1"></i>{{ pedido.horario_entrega_dt.strftime('%H:%M') if pedido.horario_entrega_dt else pedido.horario_entrega }} hs
+                    </span>
+                </div>
+                
+                <h6 class="fw-bold mb-1 text-dark">{{ pedido.cliente_nombre }} {{ pedido.cliente_apellido }}</h6>
+                <p class="small text-muted mb-2"><i class="fas fa-map-marker-alt me-1 text-danger"></i>{{ pedido.direccion_entrega }}</p>
+                
+                <div class="d-flex justify-content-between align-items-center bg-light p-3 rounded-4 mb-3">
+                    <div>
+                        <small class="d-block text-muted text-uppercase fw-bold" style="font-size: 0.6rem;">Total a Cobrar</small>
+                        <span class="fw-bold text-success fs-4">${{ "{:,.0f}".format(pedido.costo_total) }}</span>
+                    </div>
+                    <div class="text-end">
+                        <small class="d-block text-muted text-uppercase fw-bold" style="font-size: 0.6rem;">Estado</small>
+                        <span class="badge {% if pedido.estado_envio == 'Pendiente de WhatsApp' %}bg-primary{% elif pedido.estado_envio == 'Entregado' %}bg-success{% else %}bg-warning text-dark{% endif %} px-3 py-2">
+                            {{ pedido.estado_envio }}
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Botones Celular -->
+                <div class="d-flex flex-column gap-2">
+                    <div class="d-flex gap-2">
+                        {% if pedido.estado_envio == 'Pendiente de WhatsApp' %}
+                            <form action="{{ url_for('confirmar_whatsapp', id_pedido=pedido.id_pedido) }}" method="POST" class="flex-grow-1">
+                                <button type="submit" class="btn btn-primary btn-lg w-100 rounded-pill fw-bold shadow-sm" style="font-size: 0.9rem;">
+                                    <i class="fab fa-whatsapp me-2"></i>CONFIRMAR
+                                </button>
+                            </form>
+                        {% endif %}
+                        <a href="{{ url_for('detalle_pedido', id_pedido=pedido.id_pedido) }}" class="btn btn-outline-dark btn-lg flex-grow-1 rounded-pill fw-bold shadow-sm" style="font-size: 0.9rem;">
+                            <i class="fas fa-eye me-2"></i>DETALLE
+                        </a>
+                    </div>
+
+                    {% if pedido.estado_pago != 'Pagado' %}
+                        <form action="{{ url_for('marcar_pedido_pagado', id_pedido=pedido.id_pedido) }}" method="POST" class="w-100">
+                            <button type="submit" class="btn btn-success btn-lg w-100 rounded-pill fw-bold text-white shadow-sm" style="font-size: 0.9rem;">
+                                <i class="fas fa-dollar-sign me-2"></i>MARCAR COMO PAGADO
+                            </button>
+                        </form>
+                    {% endif %}
+                </div>
+
+                <!-- Repartidor Celular -->
+                {% if pedido.es_envio %}
+                <div class="mt-3 pt-2 border-top">
+                    {% if not pedido.rep_n %}
+                        <form action="{{ url_for('asignar_repartidor', id_pedido=pedido.id_pedido) }}" method="POST" class="input-group input-group-sm">
+                            <select name="id_repartidor" class="form-select rounded-start-pill" required>
+                                <option value="">Asignar Repartidor...</option>
+                                {% for rep in repartidores %}
+                                    <option value="{{ rep.id_repartidor }}">{{ rep.nombre }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" class="btn btn-dark rounded-end-pill px-3">OK</button>
+                        </form>
+                    {% else %}
+                        <div class="text-center small py-1 bg-light rounded-pill border">
+                            <i class="fas fa-motorcycle me-1 text-primary"></i>Repartidor: <strong>{{ pedido.rep_n }}</strong>
+                        </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<style>
+    body { background-color: #f0f2f5; }
+    .italic { font-style: italic; }
+    .table thead th { letter-spacing: 0.5px; border: none; }
+    .table tbody tr:last-child { border-bottom: none; }
+    .btn-group .btn { border-radius: 8px !important; margin: 0 2px; }
+    
+    /* Efecto Hover en PC */
+    .table-hover tbody tr:hover {
+        background-color: #f8faff;
+        transition: 0.3s;
+    }
+
+    @media (max-width: 767.98px) {
+        .container-fluid { padding-left: 10px; padding-right: 10px; }
+    }
+</style>
 {% endblock %}

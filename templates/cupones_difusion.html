@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-whatsapp text-success"></i> Difusión de Cupones</h2>
+        <a href="{{ url_for('gestion_cupones') }}" class="btn btn-outline-secondary">Volver</a>
+    </div>
+
+    <div class="row">
+        <!-- VISTA PREVIA DEL MENSAJE -->
+        <div class="col-md-5 mb-4">
+            <div class="card shadow-sm border-0 rounded-4">
+                <div class="card-header bg-success text-white fw-bold">
+                    Vista previa del mensaje
+                </div>
+                <div class="card-body bg-light">
+                    <pre style="white-space: pre-wrap; font-family: sans-serif; font-size: 0.9rem;">{{ mensaje_texto }}</pre>
+                </div>
+            </div>
+        </div>
+
+        <!-- LISTA DE CLIENTES -->
+        <div class="col-md-7">
+            <div class="card shadow-sm border-0 rounded-4">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Cliente</th>
+                                <th>Teléfono</th>
+                                <th class="text-center">Enviar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for cli in clientes %}
+                            {# MEJORA: Usamos el telefono_wa procesado en Python para asegurar el formato 549 #}
+                            <tr>
+                                <td><strong>{{ cli.nombre }} {{ cli.apellido }}</strong></td>
+                                <td>{{ cli.telefono_original }}</td>
+                                <td class="text-center">
+                                    <a href="https://wa.me/{{ cli.telefono_wa }}?text={{ mensaje_url }}" 
+                                       target="_blank" 
+                                       class="btn btn-success btn-sm rounded-pill px-3 fw-bold">
+                                        <i class="bi bi-send-fill"></i> ENVIAR
+                                    </a>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="3" class="text-center py-4">No hay clientes en tu base de datos aún.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

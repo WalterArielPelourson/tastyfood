@@ -3,49 +3,124 @@
 {% block title %}Gestión de Configuración{% endblock %}
 
 {% block content %}
-    <h1 class="mb-4">Gestión de Configuración</h1>
+    <h1 class="mb-4"><i class="bi bi-gear-fill me-2"></i>Gestión de Configuración</h1>
+
+    {# SECCIÓN PARA SUPER ADMIN: Seleccionar qué empresa configurar #}
+    {% if current_user.has_role('super_admin') %}
+    <div class="card shadow-sm mb-4 border-0 bg-light">
+        <div class="card-body">
+            <form action="{{ url_for('gestion_configuracion') }}" method="GET" class="row g-3 align-items-end">
+                <div class="col-md-8">
+                    <label class="form-label fw-bold">Configurar para la Empresa:</label>
+                    <select name="config_for_company" class="form-select">
+                        {% for emp in empresas_para_config %}
+                            <option value="{{ emp.id_empresa }}" {% if selected_company_id|int == emp.id_empresa %}selected{% endif %}>
+                                {{ emp.nombre }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <button type="submit" class="btn btn-secondary w-100">Cargar Configuración</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    {% endif %}
 
     <div class="row">
+        <!-- Configuración de Costo de Envío -->
         <div class="col-md-6">
-            <div class="card shadow-sm mb-4">
-                <div class="card-header">
-                    <h5>Costo de Envío a Clientes</h5>
+            <div class="card shadow-sm mb-4 border-0">
+                <div class="card-header bg-primary text-white py-3">
+                    <h5 class="mb-0"><i class="bi bi-truck me-2"></i>Costo de Envío a Clientes</h5>
                 </div>
                 <div class="card-body">
                     <form action="{{ url_for('gestion_configuracion') }}" method="POST">
+                        {# Campo oculto para mantener la empresa seleccionada #}
+                        <input type="hidden" name="config_for_company" value="{{ selected_company_id }}">
+                        
                         <div class="mb-3">
-                            <label for="costo_envio" class="form-label">Valor actual por envío a cliente:</label>
-                            <div class="input-group">
-                                <span class="input-group-text">$</span>
+                            <label for="costo_envio" class="form-label fw-bold">Valor actual por envío:</label>
+                            <div class="input-group input-group-lg">
+                                <span class="input-group-text bg-white">$</span>
                                 <input type="number" step="0.01" class="form-control" id="costo_envio" name="costo_envio" value="{{ costo_envio_actual | round(2) }}" required>
                             </div>
-                            <div class="form-text">Define el costo fijo que se agregará a los pedidos con envío a domicilio.</div>
+                            <div class="form-text mt-2 text-muted">Monto fijo que el cliente paga por el servicio de entrega.</div>
                         </div>
-                        <button type="submit" name="update_envio_costo" class="btn btn-primary">Actualizar Costo de Envío</button>
+                        <button type="submit" class="btn btn-primary w-100 fw-bold py-2">
+                            <i class="bi bi-check-circle me-2"></i>Actualizar Costo de Envío
+                        </button>
                     </form>
                 </div>
             </div>
         </div>
 
+        <!-- Configuración de Pago a Repartidor -->
         <div class="col-md-6">
-            <div class="card shadow-sm mb-4">
-                <div class="card-header">
-                    <h5>Pago a Repartidor por Envío</h5>
+            <div class="card shadow-sm mb-4 border-0">
+                <div class="card-header bg-success text-white py-3">
+                    <h5 class="mb-0"><i class="bi bi-bicycle me-2"></i>Pago a Repartidor por Envío</h5>
                 </div>
                 <div class="card-body">
                     <form action="{{ url_for('gestion_configuracion') }}" method="POST">
+                        {# Campo oculto para mantener la empresa seleccionada #}
+                        <input type="hidden" name="config_for_company" value="{{ selected_company_id }}">
+                        
                         <div class="mb-3">
-                            <label for="pago_repartidor_por_envio" class="form-label">Valor actual de pago al repartidor:</label>
-                            <div class="input-group">
-                                <span class="input-group-text">$</span>
-                                <input type="number" step="0.01" class="form-control" id="pago_repartidor_por_envio" name="pago_repartidor_por_envio" value="{{ pago_repartidor_actual | round(2) }}" required>
+                            <label for="pago_repartidor" class="form-label fw-bold">Comisión por viaje entregado:</label>
+                            <div class="input-group input-group-lg">
+                                <span class="input-group-text bg-white">$</span>
+                                {# CAMBIO CLAVE: El name="pago_repartidor" debe coincidir con el backend #}
+                                <input type="number" step="0.01" class="form-control" id="pago_repartidor" name="pago_repartidor" value="{{ pago_repartidor_actual | round(2) }}" required>
                             </div>
-                            <div class="form-text">Monto que se paga a un repartidor por cada envío realizado.</div>
+                            <div class="form-text mt-2 text-muted">Monto neto que la empresa paga al repartidor por cada viaje.</div>
                         </div>
-                        <button type="submit" name="update_pago_repartidor" class="btn btn-primary">Actualizar Pago a Repartidor</button>
+                        <button type="submit" class="btn btn-success w-100 fw-bold py-2">
+                            <i class="bi bi-check-circle me-2"></i>Actualizar Pago a Repartidor
+                        </button>
+                        <!-- SECCIÓN DE ALIAS DE PAGO -->
+                        <div class="card border-primary mb-4 shadow-sm">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0"><i class="fas fa-university me-2"></i> Configuración de Pagos Online</h5>
+                            </div>
+                            <div class="card-body">
+                                <form method="POST" class="row g-3 align-items-end">
+                                    <!-- Campo oculto necesario para que el sistema sepa qué empresa editar (especialmente para super_admin) -->
+                                    <input type="hidden" name="config_for_company" value="{{ id_empresa_actual }}">
+                                    
+                                    <div class="col-md-8">
+                                        <label class="form-label fw-bold text-primary">Alias, CBU o CVU</label>
+                                        <div class="input-group">
+                                            <span class="input-group-text bg-light"><i class="fas fa-tag"></i></span>
+                                            <input type="text" 
+                                                name="transferencia_alias" 
+                                                class="form-control form-control-lg border-primary" 
+                                                placeholder="Ej: mi.negocio.mp" 
+                                                value="{{ cargar_configuracion('TRANSFERENCIA_ALIAS', '', id_empresa_actual) }}"
+                                                required>
+                                        </div>
+                                        <div class="form-text mt-2">
+                                            Este texto aparecerá en el WhatsApp del cliente cuando elija <b>Transferencia</b> o <b>Mercado Pago</b>.
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="col-md-4">
+                                        <button type="submit" name="btn_actualizar_alias" class="btn btn-primary btn-lg w-100 shadow">
+                                            <i class="fas fa-sync-alt me-2"></i> Actualizar Alias
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
                     </form>
                 </div>
             </div>
         </div>
+    </div>
+
+    <div class="alert alert-info border-0 shadow-sm mt-3">
+        <i class="bi bi-info-circle-fill me-2"></i> 
+        <strong>Nota:</strong> Estos valores se aplicarán automáticamente a todos los pedidos y liquidaciones de viajes nuevos.
     </div>
 {% endblock %}

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Rentabilidad Real{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold mb-0"><i class="bi bi-pie-chart-fill text-primary me-2"></i>Análisis de Rentabilidad</h2>
+        <button onclick="window.print()" class="btn btn-outline-dark rounded-pill"><i class="bi bi-printer me-2"></i>Imprimir</button>
+    </div>
+    
+    <!-- Filtros -->
+    <div class="card border-0 shadow-sm rounded-4 mb-4">
+        <div class="card-body p-3">
+            <form method="GET" class="row g-2 align-items-end">
+                <div class="col-md-4"><label class="small fw-bold">Desde</label><input type="date" name="start" class="form-control" value="{{ start }}"></div>
+                <div class="col-md-4"><label class="small fw-bold">Hasta</label><input type="date" name="end" class="form-control" value="{{ end }}"></div>
+                <div class="col-md-4"><button type="submit" class="btn btn-primary w-100 fw-bold">Actualizar</button></div>
+            </form>
+        </div>
+    </div>
+
+    <div class="row g-4">
+        <!-- MÉTRICAS -->
+        <div class="col-lg-7">
+            <div class="row g-3">
+                <div class="col-6">
+                    <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                        <small class="text-muted fw-bold">VENTAS BRUTAS</small>
+                        <h3 class="fw-bold mb-0">${{ "{:,.0f}".format(totales.ingreso_bruto or 0) }}</h3>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="card border-0 shadow-sm rounded-4 p-3 bg-white text-danger">
+                        <small class="fw-bold">DESCUENTOS (CUPONES)</small>
+                        <h3 class="fw-bold mb-0">-${{ "{:,.0f}".format(totales.descuentos or 0) }}</h3>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                        <small class="text-muted fw-bold">COSTO INSUMOS</small>
+                        <h3 class="fw-bold mb-0 text-warning">${{ "{:,.0f}".format(totales.costo_materia_prima or 0) }}</h3>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="card border-0 shadow-sm rounded-4 p-3 bg-white">
+                        <small class="text-muted fw-bold">GASTOS OPERATIVOS</small>
+                        <h3 class="fw-bold mb-0 text-danger">${{ "{:,.0f}".format((totales.egresos_repartidores or 0) + (totales.egresos_manuales or 0)) }}</h3>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <div class="card border-0 shadow-lg rounded-4 p-4 text-white" style="background: linear-gradient(135deg, #05c46b, #0be881);">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <h5 class="opacity-75 mb-0 text-white">GANANCIA NETA REAL</h5>
+                                <h1 class="display-5 fw-bold mb-0 text-white">${{ "{:,.2f}".format(totales.utilidad_neta or 0) }}</h1>
+                            </div>
+                            <div class="text-end">
+                                <div class="h2 fw-bold mb-0 text-white">{{ "{:.1f}".format((totales.utilidad_neta / totales.ingreso_bruto * 100) if totales.ingreso_bruto and totales.ingreso_bruto > 0 else 0) }}%</div>
+                                <small class="text-white">Margen Real</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GRÁFICO -->
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white">
+                <h5 class="fw-bold mb-4 text-center">Distribución del Ingreso Bruto</h5>
+                <canvas id="rentabilidadChart" style="max-height: 250px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const ctx = document.getElementById('rentabilidadChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Insumos', 'Logística/Caja', 'Descuentos', 'Utilidad'],
+                datasets: [{
+                    data: [
+                        {{ totales.costo_materia_prima or 0 }},
+                        {{ (totales.egresos_repartidores or 0) + (totales.egresos_manuales or 0) }},
+                        {{ totales.descuentos or 0 }},
+                        {{ totales.utilidad_neta if totales.utilidad_neta > 0 else 0 }}
+                    ],
+                    backgroundColor: ['#ffa502', '#ff4757', '#747d8c', '#05c46b'],
+                    borderWidth: 0
+                }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, cutout: '75%' }
+        });
+    });
+</script>
+{% endblock %}

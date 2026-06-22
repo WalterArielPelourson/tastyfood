@@ -3,389 +3,849 @@
 {% block title %}Hacer Pedido{% endblock %}
 
 {% block content %}
-    <h1 class="mb-4">Realizar Pedido</h1>
-
-    <div class="row custom-layout-container"> {# Nuevo contenedor para el layout #}
-        {# --- COLUMNA IZQUIERDA: FORMULARIO DE PEDIDO (Fija) --- #}
-        <div class="col-md-6 custom-fixed-left-column"> {# Clase personalizada para columna fija #}
-            <form action="{{ url_for('hacer_pedido') }}" method="POST" id="pedido-form">
-                <h2 class="mb-3">Datos del Cliente y Entrega</h2>
-                <div class="mb-3">
-                    <label for="nombre" class="form-label">Nombre</label>
-                    <input type="text" class="form-control" id="nombre" name="nombre" required value="{{ request_form.get('nombre', '') }}">
-                </div>
-                <div class="mb-3">
-                    <label for="apellido" class="form-label">Apellido</label>
-                    <input type="text" class="form-control" id="apellido" name="apellido" required value="{{ request_form.get('apellido', '') }}">
-                </div>
-
-                <div class="mb-3 form-check">
-                    <input type="checkbox" class="form-check-input" id="es_envio_solicitado" name="es_envio_solicitado" onchange="toggleDireccionField()" {% if request_form.get('es_envio_solicitado') %}checked{% endif %}>
-                    <label class="form-check-label" for="es_envio_solicitado">Deseo envío a domicilio (Costo: ${{ costo_envio | int }})</label>
-                </div>
-
-                <div id="direccion_group" class="mb-3" style="display: none;">
-                    <label for="direccion" class="form-label">Dirección de Entrega</label>
-                    <input type="text" class="form-control" id="direccion" name="direccion" placeholder="Ej: Calle Falsa 123, Piso 5 Depto B, CABA" value="{{ request_form.get('direccion', '') }}">
-                    <div class="form-text">La dirección es necesaria solo si seleccionas envío a domicilio.</div>
-                </div>
-
-                <h2 class="mt-4 mb-3">Horario de Entrega / Retiro</h2>
-                <div class="mb-3">
-                    <label for="horario_entrega" class="form-label">Seleccione un horario</label>
-                    <select class="form-select" id="horario_entrega" name="horario_entrega" required>
-                        <option value="">-- Seleccione --</option>
-                        {% for horario in franjas_horarias %}
-                            <option value="{{ horario }}" {% if request_form.get('horario_entrega') == horario %}selected{% endif %}>{{ horario }}</option>
-                        {% else %}
-                            <option value="" disabled>No hay horarios disponibles hoy.</option>
+<div class="container-fluid px-lg-5">
+   <!-- Encabezado Estilo App -->
+    <div class="row mb-4 pt-3">
+        <div class="col-12 text-center text-md-start">
+            <h1 class="fw-bold h2"><i class="fas fa-utensils text-danger me-2"></i>Realizar Pedido</h1>
+            <div class="text-muted d-flex flex-wrap justify-content-center justify-content-md-start align-items-center gap-2">
+                <span>
+                    <i class="fas fa-clock text-primary me-1"></i> 
+                    <strong>Horarios de hoy:</strong> 
+                    {% if HORARIOS_TURNOS and HORARIOS_TURNOS|length > 0 %}
+                        {% for turno in HORARIOS_TURNOS %}
+                            {{ turno.inicio }} a {{ turno.fin }} hs{% if not loop.last %} | {% endif %}
                         {% endfor %}
-                    </select>
-                    <div class="form-text">Horarios disponibles en franjas de 15 minutos.</div>
-                </div>
-
-                <h2 class="mt-4 mb-3">Forma de Pago</h2>
-                <div class="mb-3">
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoEfectivo" value="Efectivo" {% if request_form.get('forma_pago') == 'Efectivo' or not request_form.get('forma_pago') %}checked{% endif %}>
-                        <label class="form-check-label" for="pagoEfectivo">
-                            Efectivo
-                        </label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoTarjeta" value="Tarjeta de Crédito/Débito" {% if request_form.get('forma_pago') == 'Tarjeta de Crédito/Débito' %}checked{% endif %}>
-                        <label class="form-check-label" for="pagoTarjeta">
-                            Tarjeta de Crédito/Débito (al recibir)
-                        </label>
-                    </div>
-                    <div class="form-check">
-                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoMercadoPago" value="Mercado Pago" {% if request_form.get('forma_pago') == 'Mercado Pago' %}checked{% endif %}>
-                        <label class="form-check-label" for="pagoMercadoPago">
-                            Mercado Pago (QR al recibir)
-                        </label>
-                    </div>
-                </div>
-
-                <button type="submit" class="btn btn-success btn-lg mt-4 w-100">Confirmar Pedido</button>
-            </form>
-            <div class="mt-4 pt-3 border-top">
-                <h2 class="mb-3">Tu Carrito</h2>
-                <div id="carrito-view" class="card shadow-sm p-3">
-                    {% if carrito_detalle %}
-                        <ul class="list-group list-group-flush">
-                            {% for item in carrito_detalle %}
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div>
-                                        {{ item.cantidad }} x {{ item.nombre }} <br>
-                                        <small class="text-muted">@ ${{ "{:,.2f}".format(item.precio_unitario) }} c/u</small>
-                                    </div>
-                                    <div>
-                                        <strong>${{ "{:,.2f}".format(item.subtotal) }}</strong>
-                                        <button type="button" class="btn btn-sm btn-outline-danger ms-2 remove-from-cart-btn" data-plato-id="{{ item.id_plato }}">
-                                            <i class="bi bi-x-lg"></i>
-                                        </button>
-                                    </div>
-                                </li>
-                            {% endfor %}
-                        </ul>
-                        <div class="mt-3 pt-3 border-top d-flex justify-content-between">
-                            <h5>Subtotal productos:</h5>
-                            <h5 id="subtotal_productos_display">${{ "{:,.2f}".format(total_carrito) }}</h5>
-                        </div>
-                        <div class="mt-2 d-flex justify-content-between">
-                            <h5>Costo de Envío:</h5>
-                            <h5 id="costo_envio_display">${{ "{:,.2f}".format(costo_envio if request_form.get('es_envio_solicitado') else 0.00) }}</h5>
-                        </div>
-                        <div class="mt-2 pt-3 border-top d-flex justify-content-between">
-                            <h4>TOTAL ESTIMADO:</h4>
-                            <h4 id="total-estimado-carrito">
-                                <strong>${{ "{:,.2f}".format(total_carrito + (costo_envio if request_form.get('es_envio_solicitado') else 0.00)) }}</strong>
-                            </h4>
-                        </div>
                     {% else %}
-                        <p class="text-center text-muted">El carrito está vacío. ¡Agregá algo de la carta!</p>
+                        <span class="text-danger">Cerrado por hoy</span>
                     {% endif %}
-                </div>
-                {% if carrito_detalle %}
-                <div class="mt-3 d-grid">
-                     <button type="button" class="btn btn-warning" id="clear-cart-btn"><i class="bi bi-trash"></i> Vaciar Carrito</button>
-                </div>
-                {% endif %}
+                </span>
+                
+                <span class="d-none d-md-inline text-secondary">|</span>
+                
+                <span>
+                    <i class="fas fa-map-marker-alt text-danger me-1"></i> 
+                    <strong>Envío:</strong> ${{ costo_envio | int }}
+                </span>
             </div>
         </div>
-        {# -------------------------------------------------------- #}
+    </div>
 
-        {# --- COLUMNA DERECHA: CARTA (Movil con scroll) --- #}
-        <div class="col-md-6 custom-scroll-right-column"> {# Clase personalizada para columna con scroll #}
-            <h2 class="mb-3">Nuestra Carta</h2>
-            {% if platos %}
-                <div class="row row-cols-1 g-3">
+  <!-- MENSAJE DE RESTAURANTE CERRADO -->
+    {% if not abierto %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="alert alert-danger shadow-sm border-0 rounded-4 p-4 text-center">
+                <i class="fas fa-store-alt-slash fa-3x mb-3"></i>
+                <h3 class="fw-bold">RESTAURANTE CERRADO</h3>
+                <p class="mb-2">En este momento no estamos recibiendo pedidos. Nuestros horarios de atención para hoy son:</p>
+                
+                <div class="d-flex justify-content-center flex-wrap gap-2 mb-3">
+                    {% if HORARIOS_TURNOS and HORARIOS_TURNOS|length > 0 %}
+                        {% for turno in HORARIOS_TURNOS %}
+                            <span class="badge bg-danger fs-6 px-3 py-2 rounded-pill shadow-sm">
+                                <i class="bi bi-clock me-1"></i> {{ turno.inicio }} a {{ turno.fin }} hs
+                            </span>
+                        {% endfor %}
+                    {% else %}
+                        <span class="badge bg-secondary fs-6 px-3 py-2 rounded-pill">Hoy permanecemos cerrados</span>
+                    {% endif %}
+                </div>
+                
+                <p class="small mb-0 text-dark">Podés ver nuestra carta y armar tu carrito, pero el botón de finalizar pedido está deshabilitado.</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row custom-layout-container {% if not abierto %}opacity-75{% endif %}" style="{% if not abierto %}pointer-events: none; user-select: none; filter: grayscale(0.5);{% endif %}">
+        
+        {# --- COLUMNA IZQUIERDA: LA CARTA --- #}
+        <div class="col-md-7 col-lg-8 order-2 order-md-1 custom-scroll-right-column">
+            
+            <!-- Barra de Categorías (Sticky) -->
+            <div class="category-slider sticky-top py-2 mb-4 shadow-sm bg-white rounded-3 border-bottom">
+                <div class="d-flex overflow-auto px-2" id="category-nav" style="white-space: nowrap; scrollbar-width: none; -ms-overflow-style: none;">
+                    {% set rubros_vistos = [] %}
                     {% for plato in platos %}
-                        <div class="col">
-                            <div class="card h-100 shadow-sm">
-                                <div class="card-body">
-                                    <h5 class="card-title">{{ plato.nombre }}</h5>
-                                    <p class="card-text text-muted">{{ plato.descripcion }}</p>
-                                    <h4 class="card-subtitle mb-2 text-primary">${{ "{:,.2f}".format(plato.precio) }}</h4>
+                        {% if plato.rubro not in rubros_vistos %}
+                            {% set rubro_id = "sec-" + plato.rubro | lower | replace(' ', '-') | replace('/', '-') %}
+                            <a href="#{{ rubro_id }}" 
+                               class="category-pill rounded-pill px-3 py-1 me-2 border text-decoration-none small fw-bold"
+                               data-rubro="{{ rubro_id }}">
+                                {{ plato.rubro }}
+                            </a>
+                            {% set _ = rubros_vistos.append(plato.rubro) %}
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+
+            {% if platos %}
+                <div id="menu-acontainer">
+                    {% set current_rubro = "" %}
+                    {% for plato in platos %}
+                        
+                        {% if plato.rubro != current_rubro %}
+                            {% set rubro_id = "sec-" + plato.rubro | lower | replace(' ', '-') | replace('/', '-') %}
+                            <h4 class="fw-bold mt-4 mb-3 rubro-header" id="{{ rubro_id }}">{{ plato.rubro }}</h4>
+                            {% set current_rubro = plato.rubro %}
+                        {% endif %}
+
+                        <!-- MODIFICACIÓN PUNTO 3: Agregada clase opacity-75 si no está disponible -->
+                        <div class="card mb-3 shadow-sm border-0 product-card {% if not plato.disponible %}opacity-75{% endif %}">
+                            <div class="card-body d-flex align-items-center">
+                                <div class="flex-grow-1 pe-3">
+                                    <h6 class="mb-1 fw-bold">{{ plato.nombre }}</h6>
+                                    <p class="card-text text-muted small text-truncate-2 mb-2">{{ plato.descripcion }}</p>
+                                    <h5 class="fw-bold text-dark mb-0">${{ "{:,.2f}".format(plato.precio) }}</h5>
                                 </div>
-                                <div class="card-footer bg-transparent border-top d-flex justify-content-end align-items-center">
-                                    <div class="input-group input-group-sm quantity-control" style="width: 130px;">
-                                        <button class="btn btn-outline-danger btn-minus" type="button" data-plato-id="{{ plato.id_plato }}">-</button>
-                                        <input type="text" class="form-control text-center quantity-input" value="{{ carrito.get(plato.id_plato | string, {'cantidad': 0}).cantidad }}" data-plato-id="{{ plato.id_plato }}" readonly>
-                                        <button class="btn btn-outline-success btn-plus" type="button" data-plato-id="{{ plato.id_plato }}">+</button>
-                                    </div>
+
+                                <div class="product-image-wrapper me-3">
+                                    {% if plato.imagen %}
+                                        <img src="{{ url_for('static', filename='uploads/platos/' + plato.imagen) }}" 
+                                             alt="{{ plato.nombre }}" class="rounded-3 shadow-sm" 
+                                             style="width: 85px; height: 85px; object-fit: cover;">
+                                    {% else %}
+                                        <div class="bg-light rounded-3 d-flex align-items-center justify-content-center border" 
+                                             style="width: 85px; height: 85px;">
+                                            <i class="fas fa-image text-muted opacity-50"></i>
+                                        </div>
+                                    {% endif %}
+                                </div>
+
+                                <!-- MODIFICACIÓN PUNTO 3: Lógica de botón Agregar vs Agotado -->
+                                <div class="quantity-control-wrapper text-center">
+                                    {% if plato.disponible %}
+                                        <button type="button" class="btn btn-danger rounded-pill px-3 fw-bold shadow-sm" 
+                                                {% if not abierto %}disabled{% endif %}
+                                                onclick="abrirModalPlato({{ plato.id_plato }}, '{{ plato.nombre }}', {{ plato.precio }}, '{{ plato.imagen if plato.imagen else '' }}')">
+                                            <i class="fas fa-plus me-1"></i> Agregar
+                                        </button>
+                                    {% else %}
+                                        <button type="button" class="btn btn-secondary rounded-pill px-3 fw-bold shadow-sm" disabled>
+                                            <i class="fas fa-times me-1"></i> Agotado
+                                        </button>
+                                        {% if plato.motivo_faltante %}
+                                            <div class="x-small text-danger mt-1 fw-bold" style="max-width: 100px; line-height: 1;">
+                                                Sin {{ plato.motivo_faltante }}
+                                            </div>
+                                        {% endif %}
+                                    {% endif %}
                                 </div>
                             </div>
                         </div>
                     {% endfor %}
                 </div>
             {% else %}
-                <p class="text-center text-muted">Aún no hay platos en la carta. ¡Vuelve pronto!</p>
+                <div class="text-center py-5 bg-white rounded-4 shadow-sm">
+                    <p class="text-muted">Aún no hay platos en la carta. ¡Vuelve pronto!</p>
+                </div>
             {% endif %}
         </div>
-        {# -------------------------------------------------------- #}
+
+        {# --- COLUMNA DERECHA: FORMULARIO Y CARRITO --- #}
+        <div class="col-md-5 col-lg-4 order-1 order-md-2 mb-4">
+            <div class="custom-fixed-left-column">
+                
+                <!-- Resumen del Carrito -->
+                <div class="card shadow border-0 rounded-4 mb-4 overflow-hidden">
+                    <div class="card-header bg-dark text-white py-3">
+                        <h5 class="mb-0 fw-bold"><i class="fas fa-shopping-cart me-2"></i>Tu Carrito</h5>
+                    </div>
+                    <div id="carrito-view" class="card-body p-0">
+                        {% if carrito %}
+                            <ul class="list-group list-group-flush">
+                                {% for key, item in carrito.items() %}
+                                    <li class="list-group-item py-3 bg-light-subtle">
+                                        <div class="d-flex justify-content-between align-items-start">
+                                            <div class="small">
+                                                <span class="fw-bold">{{ item.cantidad }}x</span> {{ item.nombre }}
+                                                {% if item.opciones_texto %}
+                                                    <div class="text-primary x-small mt-1">
+                                                        <i class="fas fa-check-circle me-1"></i>{{ item.opciones_texto }}
+                                                    </div>
+                                                {% endif %}
+                                                {% if item.notas %}
+                                                    <div class="text-muted x-small mt-1 italic">
+                                                        <i class="fas fa-comment-dots me-1"></i>"{{ item.notas }}"
+                                                    </div>
+                                                {% endif %}
+                                            </div>
+                                            <div class="text-end">
+                                                <span class="fw-bold d-block">${{ "{:,.2f}".format(item.precio_total_unitario * item.cantidad) }}</span>
+                                                <button type="button" class="btn btn-link btn-sm text-danger p-0 text-decoration-none" {% if not abierto %}disabled{% endif %} onclick="quitarDelCarrito('{{ key }}')">
+                                                    <i class="fas fa-trash-alt me-1"></i> Quitar
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                            <div class="p-3 bg-white border-top">
+                                <div class="d-flex justify-content-between mb-1 small">
+                                    <span>Subtotal productos:</span>
+                                    <span class="fw-bold">${{ "{:,.2f}".format(total_carrito) }}</span>
+                                </div>
+                                
+                                <div class="d-flex justify-content-between mb-1 small text-success fw-bold" id="div-descuento" style="display: none;">
+                                    <span>Descuento Cupón:</span>
+                                    <span id="monto_descuento_display">-$0.00</span>
+                                </div>
+
+                                <div class="d-flex justify-content-between mb-1 small text-info fw-bold" id="div-descuento-puntos" style="display: none;">
+                                    <span>Descuento Puntos:</span>
+                                    <span id="monto_descuento_puntos_display">-$0.00</span>
+                                </div>
+
+                                <div class="d-flex justify-content-between mb-2 small">
+                                    <span>Costo de Envío:</span>
+                                    <span id="costo_envio_display" class="fw-bold">$0.00</span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center pt-2 border-top">
+                                    <h5 class="fw-bold mb-0">TOTAL:</h5>
+                                    <h4 class="text-danger fw-bold mb-0" id="total-estimado-carrito">
+                                        ${{ "{:,.2f}".format(total_carrito) }}
+                                    </h4>
+                                </div>
+                                <div class="mt-3 d-grid">
+                                    <button type="button" class="btn btn-outline-warning btn-sm fw-bold" {% if not abierto %}disabled{% endif %} id="clear-cart-btn" onclick="vaciarCarrito()"><i class="fas fa-broom me-2"></i>Vaciar Carrito</button>
+                                </div>
+                            </div>
+                        {% else %}
+                            <div class="p-4 text-center">
+                                <p class="text-muted small mb-0">El carrito está vacío.<br>¡Agregá algo de la carta!</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Formulario de Pedido -->
+                <div class="card shadow border-0 rounded-4">
+                    <div class="card-body p-4">
+                        <form action="{{ url_for('hacer_pedido') }}" method="POST" id="pedido-form">
+                            <!-- Token CSRF  -->
+
+                            <h5 class="fw-bold mb-3"><i class="fas fa-user-edit me-2 text-danger"></i>Tus Datos</h5>
+                            
+                            <div class="row g-2">
+                                <div class="col-6 mb-3">
+                                    <label class="form-label small fw-bold">Nombre</label>
+                                    <input type="text" class="form-control form-control-sm rounded-3" name="nombre" required value="{{ request_form.get('nombre', '') }}">
+                                </div>
+                                <div class="col-6 mb-3">
+                                    <label class="form-label small fw-bold">Apellido</label>
+                                    <input type="text" class="form-control form-control-sm rounded-3" name="apellido" required value="{{ request_form.get('apellido', '') }}">
+                                </div>
+                               <div class="mb-3">
+                                <label for="telefono" class="form-label fw-bold">Teléfono / WhatsApp</label>
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light">+54 9</span>
+                                    <input type="tel" 
+                                        name="telefono" 
+                                        id="telefono" 
+                                        class="form-control form-control-lg" 
+                                        placeholder="Ej: 1122334455" 
+                                        maxlength="10" 
+                                        pattern="[0-9]{10}" 
+                                        inputmode="numeric"
+                                        required 
+                                        value="{{ request_form.telefono if request_form else '' }}">
+                                </div>
+                                <!-- Mensaje de instrucción solicitado -->
+                                <div class="form-text text-danger fw-bold">
+                                    <i class="bi bi-exclamation-circle"></i> Importante: 10 dígitos (Sin el 0 inicial y sin el 15).
+                                </div>
+                            </div>
+                            </div>
+
+                            <!-- SECCIÓN DE PUNTOS CRM 
+                            <div id="seccion-puntos-crm" class="mb-3 p-3 border rounded-3 bg-white shadow-sm" style="border-left: 4px solid #0dcaf0 !important;">
+                                <label class="form-label small fw-bold"><i class="fas fa-star text-info me-1"></i> Club de Puntos MultiSabor</label>
+                                
+                                <div id="puntos-disponibles-view" style="display: none;">
+                                    <div class="alert alert-info p-2 x-small mb-2">
+                                        Tenés <strong id="lbl-puntos-cantidad">0</strong> puntos.
+                                        Equivale a <strong id="lbl-puntos-pesos">$0.00</strong> de descuento.
+                                    </div>
+                                    <button type="button" class="btn btn-info btn-sm w-100 fw-bold text-white" id="btn-aplicar-puntos" onclick="aplicarPuntos()" {% if not abierto %}disabled{% endif %}>Canjear puntos ahora</button>
+                                </div>
+
+                                <div id="puntos-aplicados-view" style="display: none;">
+                                    <div class="alert alert-primary p-2 x-small mb-0 d-flex justify-content-between align-items-center">
+                                        <span><i class="fas fa-check-circle me-1"></i> Descuento por puntos aplicado</span>
+                                        <button type="button" class="btn btn-link btn-sm text-danger p-0 text-decoration-none fw-bold" onclick="quitarPuntos()" {% if not abierto %}disabled{% endif %}>Quitar</button>
+                                    </div>
+                                </div>
+
+                                <div id="puntos-consultar-view">
+                                    <button type="button" class="btn btn-outline-info btn-sm w-100 fw-bold" onclick="consultarPuntos()" {% if not abierto %}disabled{% endif %}>Consultar mis puntos</button>
+                                </div>
+                            </div>-->
+
+                            <div class="mb-3 form-check form-switch py-2 bg-light rounded-3 px-5">
+                                <input type="checkbox" class="form-check-input" id="es_envio_solicitado" name="es_envio_solicitado" onchange="toggleDireccionField()" {% if request_form.get('es_envio_solicitado') %}checked{% endif %}>
+                                <label class="form-check-label small fw-bold" for="es_envio_solicitado">¿Querés envío a domicilio?</label>
+                            </div>
+
+                            <div id="direccion_group" class="mb-3 p-3 bg-light rounded shadow-sm" style="display: none;">
+                                <div class="row g-2">
+                                    <div class="col-8">
+                                        <label class="small fw-bold">Calle</label>
+                                        <input type="text" class="form-control" id="calle" name="calle" placeholder="Ej: Pinto" value="{{ request_form.get('calle', '') }}">
+                                    </div>
+                                    <div class="col-4">
+                                        <label class="small fw-bold">Altura</label>
+                                        <input type="text" class="form-control" id="altura" name="altura" placeholder="800" value="{{ request_form.get('altura', '') }}">
+                                    </div>
+                                </div>
+                                <div class="row g-2 mt-2">
+                                    <div class="col-7">
+                                        <label class="small fw-bold">Localidad</label>
+                                        <input type="text" class="form-control" id="localidad" name="localidad" placeholder="Tandil" value="{{ request_form.get('localidad', '') }}">
+                                    </div>
+                                    <div class="col-5">
+                                        <label class="form-label small fw-bold">Piso/Depto</label>
+                                        <input type="text" class="form-control form-control-sm rounded-3" id="piso_depto" name="piso_depto" placeholder="4to B" value="{{ request_form.get('piso_depto', '') }}">
+                                    </div>
+                                </div>
+                                <input type="hidden" name="provincia" id="provincia" value="Buenos Aires">
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label small fw-bold">Horario de Entrega</label>
+                                
+                                {% if franjas_horarias %}
+                                    <select class="form-select form-select-sm rounded-3" name="horario_entrega" required>
+                                        <option value="">-- Seleccionar horario --</option>
+                                        {% for horario in franjas_horarias %}
+                                            <option value="{{ horario }}" {% if request_form.get('horario_entrega') == horario %}selected{% endif %}>
+                                                {{ horario }} hs
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                {% else %}
+                                    <div class="alert alert-warning py-2 px-3 small rounded-3 mb-0">
+                                        <i class="fas fa-exclamation-circle me-1"></i> 
+                                        No hay horarios disponibles para lo que resta del día.
+                                    </div>
+                                    <!-- Input oculto para que el formulario no falle por falta del campo 'horario_entrega' -->
+                                    <input type="hidden" name="horario_entrega" value="Cerrado">
+                                {% endif %}
+                            </div>
+
+                            <!-- SECCIÓN DE PROMOCIONES OPCIONALES -->
+                            <div class="mb-4 p-3 bg-light border-start border-4 border-warning rounded-3 shadow-sm">
+                                <label class="form-label small fw-bold mb-2">🎁 Promociones para vos (Opcional)</label>
+                                
+                                {% if promos_disponibles %}
+                                    <div class="d-flex flex-wrap gap-2 mb-3">
+                                        {% for promo in promos_disponibles %}
+                                            <button type="button" 
+                                                    class="btn btn-sm {% if cupon_actual.codigo == promo.codigo %}btn-warning shadow-sm border-dark{% else %}btn-outline-dark{% endif %} rounded-pill px-3"
+                                                    onclick="aplicarPromoRapida('{{ promo.codigo }}')" {% if not abierto %}disabled{% endif %}>
+                                                <i class="fas fa-gift me-1"></i> {{ promo.codigo }}
+                                            </button>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+
+                                <div class="input-group input-group-sm">
+                                    <input type="text" id="input-cupon" class="form-control shadow-none" placeholder="Otro código de cupón" value="{{ cupon_actual.codigo if cupon_actual.codigo else '' }}" {% if not abierto %}disabled{% endif %}>
+                                    <button class="btn btn-dark fw-bold" type="button" onclick="aplicarCupon()" {% if not abierto %}disabled{% endif %}>Aplicar</button>
+                                </div>
+                                
+                                <div id="mensaje-cupon" class="x-small mt-2"></div>
+
+                                {% if cupon_actual.codigo %}
+                                    <div class="mt-2">
+                                        <button type="button" class="btn btn-link btn-sm text-danger p-0 x-small text-decoration-none" onclick="quitarPromo()" {% if not abierto %}disabled{% endif %}>
+                                            <i class="fas fa-times-circle me-1"></i> Quitar promoción aplicada
+                                        </button>
+                                    </div>
+                                {% endif %}
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="form-label small fw-bold">Forma de Pago</label>
+                                <div class="payment-options border rounded-3 p-2 bg-light">
+                                    <div class="form-check small mb-2">
+                                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoEfectivo" value="Efectivo" checked>
+                                        <label class="form-check-label" for="pagoEfectivo">Efectivo</label>
+                                    </div>
+                                    <div class="form-check small mb-2">
+                                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoTarjeta" value="Tarjeta">
+                                        <label class="form-check-label" for="pagoTarjeta">Tarjeta (Posnet)</label>
+                                    </div>
+                                    <div class="form-check small mb-2">
+                                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoMP" value="Mercado Pago">
+                                        <label class="form-check-label d-flex align-items-center" for="pagoMP">
+                                            <i class="bi bi-credit-card-2-back me-2 text-primary"></i> Mercado Pago / Tarjetas
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="btn btn-danger btn-lg w-100 rounded-pill fw-bold shadow" 
+                                    {% if not abierto %}disabled{% endif %}>
+                                <i class="fas fa-check-circle me-2"></i>
+                                {% if abierto %}Confirmar Pedido{% else %}Restaurante Cerrado{% endif %}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
+</div>
+
+<!-- Carrito Flotante (Móviles) -->
+<div class="d-md-none fixed-bottom p-3 bg-white shadow-lg border-top" id="mobile-cart-bar" style="z-index: 1050; display: none;">
+    <button class="btn btn-danger w-100 py-3 rounded-4 d-flex justify-content-between align-items-center" onclick="document.querySelector('.custom-fixed-left-column').scrollIntoView({behavior: 'smooth'})">
+        <span class="fw-bold"><i class="fas fa-shopping-bag me-2"></i>Ver mi pedido</span>
+        <span class="fw-bold" id="mobile-cart-total">$0.00</span>
+    </button>
+</div>
+
+<!-- MODAL DE SELECCIÓN DE OPCIONES -->
+<div class="modal fade" id="modalPlatoOpciones" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header border-0 pb-0">
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div id="contenido-modal-plato">
+                <!-- Se carga dinámicamente -->
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .opcion-item { cursor: pointer; transition: all 0.2s; border: 2px solid #f8f9fa; }
+    .opcion-item:hover { background-color: #f0f7ff; border-color: #cfe2ff; }
+    .form-check-input:checked + .form-check-label { font-weight: bold; color: #0d6efd; }
+    .img-modal-plato { width: 100%; height: 200px; object-fit: cover; }
+    .custom-layout-container { min-height: 80vh; }
+    
+    /* CATEGORÍAS */
+    .category-slider { z-index: 1020; background: #fff; top: 60px; }
+    .category-pill { background: #f8f9fa; color: #333; transition: 0.3s; border: 1px solid #eee !important; cursor: pointer; }
+    .category-pill:hover { background: #eee; }
+    .category-pill.active { background: #dc3545 !important; color: #fff !important; border-color: #dc3545 !important; }
+
+    /* Ajuste para anclas de rubro */
+    .rubro-header { scroll-margin-top: 130px; }
+
+    .product-card { border-radius: 16px; transition: 0.2s; border: 1px solid #f0f0f0 !important; }
+    .product-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important; }
+    @media (min-width: 768px) { .custom-fixed-left-column { position: sticky; top: 70px; max-height: calc(100vh - 100px); overflow-y: auto; padding-bottom: 20px; } }
+    .text-truncate-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .x-small { font-size: 0.75rem; }
+    .italic { font-style: italic; }
+
+    /* ESTILO CUANDO ESTÁ CERRADO */
+    {% if not abierto %}
+    .custom-layout-container { 
+        filter: grayscale(0.8);
+        pointer-events: none;
+    }
+    .custom-scroll-right-column {
+        pointer-events: auto !important;
+        cursor: not-allowed;
+    }
+    .product-card button { display: none; }
+    {% endif %}
+</style>
+
 {% endblock %}
 
 {% block scripts %}
 <script>
-    console.log("Script de hacer_pedido.html cargado.");
-
+    let modalBootstrap;
     const direccionGroup = document.getElementById('direccion_group');
-    const direccionInput = document.getElementById('direccion');
     const esEnvioCheckbox = document.getElementById('es_envio_solicitado');
-    const costoEnvioDisplay = document.getElementById('costo_envio_display');
     const totalEstimadoCarrito = document.getElementById('total-estimado-carrito');
-    const subtotalProductosDisplay = document.getElementById('subtotal_productos_display'); 
+    const mobileCartBar = document.getElementById('mobile-cart-bar');
+    const mobileCartTotal = document.getElementById('mobile-cart-total');
 
     let baseTotalProductos = {{ total_carrito | round(2) }}; 
     const COSTO_ENVIO_CONFIG = {{ costo_envio | round(2) }};
-
-    function updateOrderSummary() {
-        const currentEnvioCost = esEnvioCheckbox.checked ? COSTO_ENVIO_CONFIG : 0.00;
-        if (costoEnvioDisplay) costoEnvioDisplay.textContent = `$${currentEnvioCost.toFixed(2)}`;
-        if (subtotalProductosDisplay) subtotalProductosDisplay.textContent = `$${baseTotalProductos.toFixed(2)}`;
-        if (totalEstimadoCarrito) totalEstimadoCarrito.innerHTML = `<strong>$${(baseTotalProductos + currentEnvioCost).toFixed(2)}</strong>`;
-        console.log(`Resumen actualizado: Subtotal=${baseTotalProductos}, Envío=${currentEnvioCost}`);
-    }
+    
+    // DESCUENTOS
+    let descuentoCupon = {{ cupon_actual.descuento | default(0) }};
+    let descuentoPuntos = {{ puntos_actual.descuento_pesos | default(0) }};
 
     function toggleDireccionField() {
-        console.log(`Checkbox de envío cambiado. Estado: ${esEnvioCheckbox.checked}`);
-        if (esEnvioCheckbox.checked) {
-            if (direccionGroup) direccionGroup.style.display = 'block';
-            if (direccionInput) direccionInput.setAttribute('required', 'required');
-        } else {
-            if (direccionGroup) direccionGroup.style.display = 'none';
-            if (direccionInput) direccionInput.removeAttribute('required');
-        }
+        direccionGroup.style.display = esEnvioCheckbox.checked ? 'block' : 'none';
         updateOrderSummary();
     }
 
-    document.addEventListener('DOMContentLoaded', function() {
-        console.log("DOM Cargado en hacer_pedido.html, inicializando listeners.");
-
-        toggleDireccionField(); 
-
-        const cartItemCountElement = document.getElementById('cart-item-count'); 
-        if (!cartItemCountElement) {
-            console.error("Elemento #cart-item-count no encontrado en el DOM.");
-        }
-
-        function updateNavbarCartCount() {
-            fetch('/api/get_cart_status')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success && cartItemCountElement) {
-                        cartItemCountElement.textContent = data.total_items;
-                        console.log(`Contador de navbar actualizado: ${data.total_items}`);
-                    } else {
-                        console.error('Error al obtener estado del carrito (navbar):', data.message);
-                    }
-                })
-                .catch(error => console.error('Error de red al obtener estado del carrito (navbar):', error));
-        }
+    function updateOrderSummary() {
+        const envio = esEnvioCheckbox.checked ? COSTO_ENVIO_CONFIG : 0;
+        const total = (baseTotalProductos - descuentoCupon - descuentoPuntos) + envio;
         
-        document.body.addEventListener('click', function(event) {
-            const target = event.target; 
-            let platoId;
-            let quantityInput;
-            let currentQuantity;
+        // Actualizar vistas de descuentos
+        const divDescCupon = document.getElementById('div-descuento');
+        const divDescPuntos = document.getElementById('div-descuento-puntos');
 
-            if (target.classList.contains('btn-plus')) {
-                platoId = target.dataset.platoId;
-                quantityInput = document.querySelector(`.quantity-input[data-plato-id="${platoId}"]`);
-                if (quantityInput) {
-                    currentQuantity = parseInt(quantityInput.value);
-                    currentQuantity++;
-                    quantityInput.value = currentQuantity;
-                    console.log(`Clic en +, platoId: ${platoId}, nueva cantidad: ${currentQuantity}`);
-                    updateCart(platoId, currentQuantity); 
-                } else {
-                    console.error(`Input de cantidad para platoId ${platoId} no encontrado.`);
-                }
-            } 
-            else if (target.classList.contains('btn-minus')) {
-                platoId = target.dataset.platoId;
-                quantityInput = document.querySelector(`.quantity-input[data-plato-id="${platoId}"]`);
-                if (quantityInput) {
-                    currentQuantity = parseInt(quantityInput.value);
-                    if (currentQuantity > 0) {
-                        currentQuantity--;
-                        quantityInput.value = currentQuantity;
-                    } else {
-                        alert('La cantidad no puede ser menor a 0.');
-                        quantityInput.value = 0;
-                    }
-                    console.log(`Clic en -, platoId: ${platoId}, nueva cantidad: ${currentQuantity}`);
-                    updateCart(platoId, currentQuantity);
-                } else {
-                    console.error(`Input de cantidad para platoId ${platoId} no encontrado.`);
-                }
+        if(descuentoCupon > 0) {
+            divDescCupon.style.display = 'flex';
+            document.getElementById('monto_descuento_display').innerText = `-$${descuentoCupon.toFixed(2)}`;
+        } else { divDescCupon.style.display = 'none'; }
+
+        if(descuentoPuntos > 0) {
+            divDescPuntos.style.display = 'flex';
+            document.getElementById('monto_descuento_puntos_display').innerText = `-$${descuentoPuntos.toFixed(2)}`;
+        } else { divDescPuntos.style.display = 'none'; }
+
+        document.getElementById('costo_envio_display').textContent = `$${envio.toFixed(2)}`;
+        totalEstimadoCarrito.innerHTML = `<strong>$${total.toLocaleString('es-AR', {minimumFractionDigits: 2})}</strong>`;
+        
+        if (mobileCartTotal) mobileCartTotal.textContent = `$${total.toLocaleString('es-AR', {minimumFractionDigits: 2})}`;
+        if (baseTotalProductos > 0) mobileCartBar.style.display = 'block';
+    }
+
+    // --- LÓGICA DE PUNTOS CRM ---
+    window.puntosDisponiblesParaCanje = 0;
+
+    function consultarPuntos() {
+        const tel = document.querySelector('input[name="telefono"]').value;
+        if(!tel) { alert("Ingresá tu teléfono primero para buscar tus puntos."); return; }
+
+        fetch('/api/consultar_puntos', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                
+            },
+            body: JSON.stringify({telefono: tel})
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                document.getElementById('puntos-consultar-view').style.display = 'none';
+                document.getElementById('puntos-disponibles-view').style.display = 'block';
+                document.getElementById('lbl-puntos-cantidad').innerText = data.puntos;
+                document.getElementById('lbl-puntos-pesos').innerText = '$' + data.monto_pesos.toFixed(2);
+                window.puntosDisponiblesParaCanje = data.puntos;
+            } else {
+                alert(data.message);
             }
         });
+    }
 
-        function updateCart(platoId, quantity) {
-            console.log(`Llamando a updateCart para plato ${platoId} con cantidad ${quantity}`);
-            const formData = new FormData();
-            formData.append('cantidad', quantity);
+    function aplicarPuntos() {
+        const tel = document.querySelector('input[name="telefono"]').value;
+        fetch('/api/aplicar_puntos', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                
+            },
+            body: JSON.stringify({telefono: tel, puntos: window.puntosDisponiblesParaCanje})
+        }).then(() => window.location.reload());
+    }
 
-            fetch(`/api/update_cart_quantity/${platoId}`, {
-                method: 'POST',
-                body: formData 
+    function quitarPuntos() {
+        fetch('/api/quitar_puntos', { 
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                
+            }
+        }).then(() => window.location.reload());
+    }
+
+    // --- LÓGICA DE CUPONES ---
+    function aplicarPromoRapida(codigo) {
+        document.getElementById('input-cupon').value = codigo;
+        aplicarCupon();
+    }
+
+    function aplicarCupon() {
+        const codigo = document.getElementById('input-cupon').value;
+        const telefono = document.querySelector('input[name="telefono"]').value;
+        if (!codigo) return;
+
+        fetch('/api/validar_cupon', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                
+            },
+            body: JSON.stringify({
+                codigo: codigo, 
+                total: baseTotalProductos,
+                telefono: telefono
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    console.log(`Éxito: ${data.message}`);
-                    updateNavbarCartCount();
+        })
+        .then(res => res.json())
+        .then(data => {
+            const mensaje = document.getElementById('mensaje-cupon');
+            if (data.success) {
+                mensaje.className = "x-small mt-2 text-success fw-bold";
+                mensaje.innerText = data.message;
+                setTimeout(() => window.location.reload(), 800);
+            } else {
+                mensaje.className = "x-small mt-2 text-danger";
+                mensaje.innerText = data.message;
+            }
+        });
+    }
+
+    function quitarPromo() {
+        if(confirm("¿Seguro que querés quitar el descuento?")) {
+            fetch('/api/limpiar_cupon', { 
+                method: 'POST', 
+                headers: { 
+                    'Content-Type': 'application/json',
                     
-                    fetch('/api/get_cart_status') 
-                        .then(res => res.json())
-                        .then(cartStatus => {
-                            if (cartStatus.success) {
-                                baseTotalProductos = cartStatus.total_precio;
-                                updateOrderSummary();
-                                updateCarritoSummarySection();
-                            }
-                        })
-                        .catch(err => console.error('Error al obtener el estado del carrito para resumen:', err));
-
-                } else {
-                    alert('Error al actualizar el carrito: ' + data.message);
-                    console.error('Error del servidor:', data.message);
-                }
+                } 
             })
-            .catch(error => {
-                console.error('Error de red al actualizar carrito:', error);
-                alert('Hubo un error de conexión al actualizar el carrito.');
+            .then(() => {
+                document.getElementById('input-cupon').value = "";
+                window.location.reload(); 
             });
         }
+    }
 
-        // --- NUEVA FUNCIÓN: Para actualizar solo la sección del resumen del carrito ---
-        function updateCarritoSummarySection() {
-            // Requerirá un endpoint AJAX para obtener el HTML del carrito o reconstruirlo
-            // Para simplicidad en esta respuesta, y dado que ya se actualiza el total,
-            // si se necesita una actualización completa de los items, se recargará.
-            // Si quieres evitar la recarga, necesitarás:
-            // 1. Un nuevo endpoint en Flask que devuelva solo el HTML de carrito_detalle.
-            // 2. JS para reemplazar el contenido de #carrito-view con el nuevo HTML.
-            // Por ahora, para reflejar los items agregados/eliminados, se recarga.
-            // Si solo se cambia cantidad sin añadir/quitar un item nuevo, el subtotal se actualiza localmente.
-            window.location.reload(); 
+    // --- LÓGICA DE VARIANTES Y CARRITO ---
+    function abrirModalPlato(id, nombre, precio, imagen) {
+        const contenedor = document.getElementById('contenido-modal-plato');
+        contenedor.innerHTML = '<div class="p-5 text-center"><div class="spinner-border text-danger"></div></div>';
+        modalBootstrap.show();
+
+        fetch(`/api/plato/${id}/modificadores`)
+            .then(res => res.json())
+            .then(modificadores => {
+                let html = `
+                    <div class="p-3 pt-0">
+                        ${imagen ? `<img src="/static/uploads/platos/${imagen}" class="img-modal-plato rounded-3 mb-3">` : ''}
+                        <h3 class="fw-bold mb-1">${nombre}</h3>
+                        <p class="text-danger fs-5 fw-bold mb-4">$${precio.toFixed(2)}</p>
+                        <form id="form-opciones-plato">
+                            <input type="hidden" name="plato_id" value="${id}">
+                            <input type="hidden" id="precio_base_modal" value="${precio}">`;
+
+                modificadores.forEach(mod => {
+                    html += `
+                        <div class="mb-4 modificador-grupo" data-nombre="${mod.nombre}" data-obligatorio="${mod.obligatorio}">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <h6 class="fw-bold mb-0">${mod.nombre}</h6>
+                                ${mod.obligatorio ? '<span class="badge bg-danger">OBLIGATORIO</span>' : '<span class="badge bg-light text-dark border">OPCIONAL</span>'}
+                            </div>`;
+                    mod.opciones.forEach(opt => {
+                        const type = mod.tipo === 'radio' ? 'radio' : 'checkbox';
+                        const name = mod.tipo === 'radio' ? `mod_${mod.id_modificador}` : `opt_${opt.id_opcion}`;
+                        html += `
+                            <div class="form-check opcion-item p-3 mb-2 rounded border">
+                                <input class="form-check-input ms-0 me-2" type="${type}" name="${name}" id="opt_${opt.id_opcion}" value="${opt.id_opcion}" data-precio-extra="${opt.precio_extra}">
+                                <label class="form-check-label d-flex justify-content-between w-100" for="opt_${opt.id_opcion}">
+                                    <span>${opt.nombre}</span>
+                                    <span class="text-success">${opt.precio_extra > 0 ? '+ $'+opt.precio_extra : ''}</span>
+                                </label>
+                            </div>`;
+                    });
+                    html += `</div>`;
+                });
+
+                html += `
+                            <div class="mb-3">
+                                <label class="form-label fw-bold small">Notas adicionales:</label>
+                                <textarea name="notas" class="form-control" placeholder="Ej: Sin cebolla..."></textarea>
+                            </div>
+                            <div class="d-flex align-items-center justify-content-between mt-4 bg-light p-3 rounded-3">
+                                <div class="input-group" style="width: 120px;">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="cambiarCantModal(-1)">-</button>
+                                    <input type="number" id="cant-modal" name="cantidad" class="form-control text-center border-0 bg-transparent fw-bold" value="1" readonly>
+                                    <button class="btn btn-outline-secondary" type="button" onclick="cambiarCantModal(1)">+</button>
+                                </div>
+                                <button type="button" onclick="confirmarAgregarAlCarrito()" class="btn btn-danger btn-lg px-4 fw-bold">
+                                    AGREGAR $ <span id="total-modal">${precio.toFixed(2)}</span>
+                                </button>
+                            </div>
+                        </form>
+                    </div>`;
+                contenedor.innerHTML = html;
+                document.getElementById('form-opciones-plato').addEventListener('change', actualizarPrecioModal);
+            });
+    }
+
+    function cambiarCantModal(v) {
+        const i = document.getElementById('cant-modal');
+        let n = parseInt(i.value) + v;
+        if (n >= 1) { i.value = n; actualizarPrecioModal(); }
+    }
+
+    function actualizarPrecioModal() {
+        const base = parseFloat(document.getElementById('precio_base_modal').value);
+        const cant = parseInt(document.getElementById('cant-modal').value);
+        let extras = 0;
+        document.querySelectorAll('#form-opciones-plato input:checked').forEach(s => {
+            extras += parseFloat(s.getAttribute('data-precio-extra') || 0);
+        });
+        document.getElementById('total-modal').innerText = ((base + extras) * cant).toFixed(2);
+    }
+
+    function confirmarAgregarAlCarrito() {
+        const grupos = document.querySelectorAll('.modificador-grupo[data-obligatorio="1"]');
+        for (let g of grupos) {
+            if (g.querySelectorAll('input:checked').length === 0) {
+                alert(`Seleccioná una opción para: ${g.getAttribute('data-nombre')}`);
+                return;
+            }
         }
+        const opciones = [];
+        document.querySelectorAll('#form-opciones-plato input:checked').forEach(i => opciones.push(parseInt(i.value)));
         
-        document.querySelectorAll('.remove-from-cart-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                const platoId = this.dataset.platoId;
-                if (confirm('¿Estás seguro de que quieres eliminar este producto del carrito?')) {
-                     const quantityInput = document.querySelector(`.quantity-input[data-plato-id="${platoId}"]`);
-                     if (quantityInput) quantityInput.value = 0; 
-                    updateCart(platoId, 0); 
-                    window.location.reload(); 
+        fetch('/api/update_cart_complex', {
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+               
+            },
+            body: JSON.stringify({
+                plato_id: document.querySelector('input[name="plato_id"]').value,
+                cantidad: document.getElementById('cant-modal').value,
+                notas: document.querySelector('textarea[name="notas"]').value,
+                opciones: opciones
+            })
+        }).then(res => {
+            if(res.ok) window.location.reload();
+            else return res.json().then(err => alert(err.message));
+        });
+    }
+
+    function vaciarCarrito() {
+        if(confirm("¿Seguro que querés vaciar el carrito?")) {
+            fetch('/api/clear_cart', { 
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    
                 }
+            }).then(() => window.location.reload());
+        }
+    }
+
+    function quitarDelCarrito(key) {
+        // Debes implementar una API específica para borrar un item, o vaciar todo
+        fetch('/api/clear_cart', { 
+            method: 'POST',
+            headers: { 
+                'Content-Type': 'application/json',
+                
+            }
+        }).then(() => window.location.reload());
+    }
+
+    // --- LÓGICA DE FILTROS POR RUBRO (SCROLLSPY) ---
+    function initScrollSpy() {
+        const categoryLinks = document.querySelectorAll('.category-pill');
+        const sections = document.querySelectorAll('.rubro-header');
+        const nav = document.getElementById('category-nav');
+
+        categoryLinks.forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                const targetId = this.getAttribute('href');
+                const targetSection = document.querySelector(targetId);
+                if (targetSection) targetSection.scrollIntoView({ behavior: 'smooth' });
             });
         });
 
-        const clearCartBtn = document.getElementById('clear-cart-btn');
-        if (clearCartBtn) {
-            clearCartBtn.addEventListener('click', function() {
-                if (confirm('¿Estás seguro de que quieres vaciar todo el carrito?')) {
-                    fetch('/api/clear_cart', { method: 'POST' })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            alert(data.message);
-                            window.location.reload(); 
-                        } else {
-                            alert('Error al vaciar carrito: ' + data.message);
+        const observerOptions = {
+            root: null,
+            rootMargin: '-130px 0px -70% 0px',
+            threshold: 0
+        };
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const id = entry.target.getAttribute('id');
+                    categoryLinks.forEach(link => {
+                        link.classList.remove('active');
+                        if (link.getAttribute('data-rubro') === id) {
+                            link.classList.add('active');
+                            const linkOffset = link.offsetLeft - 20;
+                            nav.scrollTo({ left: linkOffset, behavior: 'smooth' });
                         }
-                    })
-                    .catch(error => console.error('Error:', error));
+                    });
                 }
             });
+        }, observerOptions);
+
+        sections.forEach(s => observer.observe(s));
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        modalBootstrap = new bootstrap.Modal(document.getElementById('modalPlatoOpciones'));
+        
+        {% if puntos_actual.descuento_pesos %}
+            document.getElementById('puntos-consultar-view').style.display = 'none';
+            document.getElementById('puntos-aplicados-view').style.display = 'block';
+        {% endif %}
+
+        updateOrderSummary();
+        toggleDireccionField();
+        initScrollSpy();
+    });
+
+    // --- PERSISTENCIA ---
+    const camposForm = ['nombre', 'apellido', 'telefono', 'calle', 'altura', 'localidad', 'piso_depto'];
+    document.querySelectorAll('#pedido-form input').forEach(input => {
+        input.addEventListener('input', () => {
+            if (camposForm.includes(input.name)) sessionStorage.setItem('draft_' + input.name, input.value);
+        });
+    });
+
+    document.addEventListener('DOMContentLoaded', () => {
+        camposForm.forEach(campo => {
+            const guardado = sessionStorage.getItem('draft_' + campo);
+            if (guardado) {
+                const input = document.querySelector(`input[name="${campo}"]`);
+                if(input) input.value = guardado;
+            }
+        });
+        document.getElementById('pedido-form').addEventListener('submit', () => {
+            camposForm.forEach(campo => sessionStorage.removeItem('draft_' + campo));
+        });
+    });
+
+
+    
+    const inputTelefono = document.getElementById('telefono');
+
+    inputTelefono.addEventListener('input', function (e) {
+        // 1. Elimina cualquier caracter que no sea un número
+        let valor = e.target.value.replace(/\D/g, '');
+        
+        // 2. Si el usuario intenta poner el 0 al principio, se lo quitamos
+        if (valor.startsWith('0')) {
+            valor = valor.substring(1);
+        }
+        
+        // 3. Si el usuario intenta poner el 15, lo ayudamos (opcional, pero recomendado)
+        // Nota: Esta lógica es compleja porque el 15 puede ser parte de un número real.
+        // Por ahora, solo limitaremos a 10 dígitos.
+        
+        // 4. Limitamos a máximo 10 dígitos
+        if (valor.length > 10) {
+            valor = valor.slice(0, 10);
+        }
+        
+        e.target.value = valor;
+    });
+
+    // Validación extra antes de enviar el formulario
+    inputTelefono.addEventListener('blur', function (e) {
+        if (e.target.value.length > 0 && e.target.value.length < 10) {
+            alert("El teléfono debe tener exactamente 10 dígitos (Ej: 11 2233 4455).");
+            e.target.focus();
         }
     });
+
 </script>
-<style>
-    /* Estilos personalizados para el layout de 3 secciones */
-
-    /* Contenedor principal para el layout */
-    .custom-layout-container {
-        display: flex; /* Habilitar flexbox para el contenedor */
-        /* Asegura que ocupe todo el espacio disponible */
-        min-height: calc(100vh - (var(--navbar-height, 56px) + var(--footer-height, 0px) + 2rem)); /* Resta el alto del navbar, footer y paddings */
-        margin-top: 1rem; /* Pequeño margen superior */
-    }
-
-    /* Columna izquierda: formulario de pedido y carrito (fija) */
-    .custom-fixed-left-column {
-        position: sticky; /* Hace que la columna sea pegajosa */
-        top: var(--navbar-height, 56px); /* Pegar justo debajo del navbar */
-        height: calc(100vh - (var(--navbar-height, 56px) + 2rem)); /* Ocupar casi toda la altura de la ventana */
-        overflow-y: auto; /* Habilitar scroll interno si el contenido es demasiado alto */
-        padding-right: 15px; /* Espacio entre las columnas */
-        /* background-color: #f8f9fa; Opcional: para diferenciar visualmente */
-        /* border-right: 1px solid #dee2e6; Opcional: un borde separador */
-        z-index: 10; /* Asegurarse de que esté por encima del contenido que hace scroll */
-    }
-
-    /* Columna derecha: carta (con scroll) */
-    .custom-scroll-right-column {
-        overflow-y: auto; /* Habilitar scroll vertical para esta columna */
-        height: calc(100vh - (var(--navbar-height, 56px) + 2rem)); /* Ocupar casi toda la altura de la ventana */
-        padding-left: 15px; /* Espacio entre las columnas */
-        /* z-index: 5; Asegurarse de que esté debajo de la columna fija si se superponen (en casos de scroll extremo) */
-    }
-
-    /* Ajustes para el navbar si es fijo */
-    body {
-        padding-top: var(--navbar-height, 56px); /* Evitar que el contenido se superponga con el navbar fijo */
-    }
-
-    /* Media queries para pantallas más pequeñas donde el layout fijo podría no ser ideal */
-    @media (max-width: 767.98px) {
-        .custom-layout-container {
-            display: block; /* Volver al flujo normal de bloques en móviles */
-            min-height: auto;
-        }
-        .custom-fixed-left-column,
-        .custom-scroll-right-column {
-            position: static; /* Quitar el comportamiento sticky */
-            height: auto; /* Quitar la altura fija */
-            overflow-y: visible; /* Quitar el scroll interno */
-            padding-right: var(--bs-gutter-x, 1.5rem); /* Restaurar padding default de bootstrap */
-            padding-left: var(--bs-gutter-x, 1.5rem);
-            border-right: none;
-        }
-        .custom-fixed-left-column {
-             margin-bottom: 2rem; /* Espacio entre el formulario y la carta en móvil */
-        }
-    }
-
-    /* Variables CSS (opcional, pero útil para mantener consistencia) */
-    :root {
-        --navbar-height: 56px; /* Ajusta esto al alto real de tu navbar */
-        --footer-height: 0px; /* Si tienes footer, ajusta su alto */
-    }
-</style>
 {% endblock %}

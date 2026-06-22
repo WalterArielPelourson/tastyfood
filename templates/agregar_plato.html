@@ -17,17 +17,20 @@
                         {% endfor %}
                     {% endif %}
                 {% endwith %}
-                <form action="{{ url_for('agregar_plato') }}" method="POST">
+                
+                {# IMPORTANTE: Se agregó enctype="multipart/form-data" para permitir subir archivos #}
+                <form action="{{ url_for('agregar_plato') }}" method="POST" enctype="multipart/form-data">
+                    
                     <div class="mb-3">
                         <label for="nombre" class="form-label">Nombre del Plato</label>
                         <input type="text" class="form-control" id="nombre" name="nombre" value="{{ request_form.nombre if request_form.nombre else '' }}" required>
                     </div>
+                    
                     <div class="mb-3">
                         <label for="descripcion" class="form-label">Descripción</label>
                         <textarea class="form-control" id="descripcion" name="descripcion" rows="3">{{ request_form.descripcion if request_form.descripcion else '' }}</textarea>
                     </div>
                     
-                    {# NUEVO CAMPO: Rubro del Plato #}
                     <div class="mb-3">
                         <label for="rubro" class="form-label">Rubro (Categoría)</label>
                         <input type="text" class="form-control" id="rubro" name="rubro" value="{{ request_form.rubro if request_form.rubro else '' }}">
@@ -39,23 +42,31 @@
                         <input type="number" step="0.01" class="form-control" id="precio" name="precio" value="{{ request_form.precio if request_form.precio else '' }}" required>
                     </div>
 
+                    {# NUEVO CAMPO: Carga de Imagen #}
+                    <div class="mb-3">
+                        <label for="imagen" class="form-label">Imagen del Plato</label>
+                        <input type="file" class="form-control" id="imagen" name="imagen" accept="image/*">
+                        <div class="form-text">Formatos permitidos: JPG, PNG, JPEG, GIF.</div>
+                    </div>
+
                     {% if current_user.has_role('super_admin') %}
                         <div class="mb-3">
-                            <label for="id_empresa_asignar" class="form-label">Asignar a Empresa (Super Admin)</label>
-                            <select class="form-select" id="id_empresa_asignar" name="id_empresa_asignar">
+                            <label for="id_empresa" class="form-label">Asignar a Empresa (Super Admin)</label>
+                            <select class="form-select" id="id_empresa" name="id_empresa">
                                 <option value="" selected>Empresa por defecto</option>
                                 {% for empresa in empresas_disponibles %}
-                                    <option value="{{ empresa.id_empresa }}" {% if request_form.id_empresa_asignar and request_form.id_empresa_asignar|int == empresa.id_empresa %}selected{% endif %}>
+                                    <option value="{{ empresa.id_empresa }}" {% if request_form.id_empresa and request_form.id_empresa|int == empresa.id_empresa %}selected{% endif %}>
                                         {{ empresa.nombre }}
                                     </option>
                                 {% endfor %}
                             </select>
-                            <div class="form-text">Si no se selecciona, se asignará a la empresa por defecto (ID: {{ config.DEFAULT_COMPANY_FOR_ORDERS }}).</div>
                         </div>
                     {% endif %}
 
-                    <div class="d-flex justify-content-between">
-                        <a href="{{ url_for('gestion_catalogo') }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Volver</a>
+                    <div class="d-flex justify-content-between mt-4">
+                        <a href="{{ url_for('gestion_catalogo') }}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Volver
+                        </a>
                         <button type="submit" class="btn btn-success">
                             <i class="bi bi-save"></i> Guardar Plato
                         </button>

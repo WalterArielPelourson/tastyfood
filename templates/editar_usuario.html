@@ -31,6 +31,16 @@
                         <input type="text" class="form-control" id="apellido" name="apellido" required value="{{ usuario.apellido }}">
                     </div>
                     <div class="mb-3">
+                        <label for="telefono" class="form-label fw-bold">Teléfono / Celular</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-phone"></i></span>
+                            <input type="text" class="form-control" id="telefono" name="telefono" 
+                                placeholder="Ej: 5491122334455" 
+                                value="{{ usuario.telefono if usuario else request_form.telefono }}">
+                        </div>
+                        <div class="form-text">Usar formato internacional (ej: 549 para Argentina).</div>
+                    </div>
+                    <div class="mb-3">
                         <label for="id_rol" class="form-label">Rol</label>
                         <select class="form-select" id="id_rol" name="id_rol" required>
                             <option value="">Seleccione un Rol</option>
@@ -39,6 +49,23 @@
                             {% endfor %}
                         </select>
                     </div>
+
+                    <div class="mb-3">
+                        <label for="id_repartidor_vinculado" class="form-label fw-bold text-primary">
+                            <i class="bi bi-bicycle"></i> Vincular con Repartidor Físico
+                        </label>
+                        <select class="form-select" id="id_repartidor_vinculado" name="id_repartidor_vinculado">
+                            <option value="">-- Ninguno (No es repartidor) --</option>
+                            {% for rep in repartidores %}
+                                <option value="{{ rep.id_repartidor }}" 
+                                    {% if usuario.id_repartidor_vinculado == rep.id_repartidor %}selected{% endif %}>
+                                    {{ rep.nombre }} {{ rep.apellido }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Obligatorio si el usuario va a usar el Panel de Reparto.</div>
+                    </div>
+
                     <div class="mb-3">
                         <label for="id_empresa" class="form-label">Empresa (Opcional, no para Super Admin)</label>
                         <select class="form-select" id="id_empresa" name="id_empresa">

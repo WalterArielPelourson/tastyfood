@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+{% block title %}Gestión Universal de Receta: {{ plato.nombre }}{% endblock %}
+{% block content %}
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="fw-bold mb-0">Gestión de Costos: {{ plato.nombre }}</h1>
+            <p class="text-muted">Configura ingredientes base y extras en un solo lugar.</p>
+        </div>
+        <a href="{{ url_for('gestion_catalogo') }}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Volver al Catálogo
+        </a>
+    </div>
+
+    <div class="row">
+        <!-- Columna Izquierda: Formulario de Carga y Resumen -->
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 rounded-4 mb-4" id="card-formulario">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3" id="titulo-formulario"><i class="bi bi-plus-circle me-2"></i>Vincular Insumo</h5>
+                    <form method="POST" id="form-receta">
+                        
+                        <!-- NUEVO SELECTOR: DESTINO DEL INGREDIENTE -->
+                        <div class="mb-3">
+                            <label class="small fw-bold text-primary">¿A qué aplica este ingrediente?</label>
+                            <select name="tipo_destino" id="select-destino" class="form-select border-primary shadow-sm" required>
+                                <option value="base" class="fw-bold">-- RECETA BASE DEL PLATO --</option>
+                                {% if opciones %}
+                                    <optgroup label="Variantes / Extras Disponibles">
+                                        {% for opt in opciones %}
+                                            <option value="opt_{{ opt.id_opcion }}">Variante: {{ opt.mod_n }} - {{ opt.opcion_n }}</option>
+                                        {% endfor %}
+                                    </optgroup>
+                                {% endif %}
+                            </select>
+                            <div class="form-text x-small">Los "Base" se descuentan siempre. Los "Variantes" solo si el cliente los pide.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="small fw-bold">Seleccionar Insumo</label>
+                            <select name="id_insumo" id="select-insumo" class="form-select" required>
+                                <option value="">-- Elige un ingrediente --</option>
+                                {% for ins in insumos %}
+                                    <option value="{{ ins.id_insumo }}">
+                                        {{ ins.nombre }} (Stock: {{ ins.stock_actual }} {{ ins.unidad_medida }})
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="small fw-bold">Cantidad necesaria</label>
+                            <div class="input-group">
+                                <input type="number" step="0.001" name="cantidad" id="input-cantidad" class="form-control" placeholder="Ej: 0.200" required>
+                                <span class="input-group-text bg-light">Cant.</span>
+                            </div>
+                        </div>
+
+                        <button type="submit" id="btn-submit-receta" class="btn btn-danger w-100 fw-bold">
+                            Guardar en Composición
+                        </button>
+                        <button type="button" id="btn-cancelar-edicion" class="btn btn-link btn-sm w-100 text-secondary mt-2 d-none" onclick="cancelarEdicion()">
+                            Cancelar edición
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- RESUMEN DE COSTOS BASE -->
+            <div class="card shadow-sm border-0 rounded-4 bg-dark text-white mb-4">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3">Costos Base (Sin Extras)</h5>
+                    {% set total_base = namespace(value=0) %}
+                    {% for r in receta %}
+                        {% if r.origen == 'base' %}
+                            {% set total_base.value = total_base.value + (r.cantidad_requerida * r.precio_compra) %}
+                        {% endif %}
+                    {% endfor %}
+
+                    <div class="d-flex justify-content-between mb-2 small">
+                        <span>Costo Materia Prima:</span>
+                        <span class="fw-bold text-warning">${{ "{:,.2f}".format(total_base.value) }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between mb-2 small">
+                        <span>Precio de Venta:</span>
+                        <span class="fw-bold text-info">${{ "{:,.2f}".format(plato.precio | default(0)) }}</span>
+                    </div>
+                    <hr class="bg-secondary">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="fw-bold">Margen Base:</span>
+                        <h4 class="fw-bold mb-0 text-success">${{ "{:,.2f}".format((plato.precio | default(0)) - total_base.value) }}</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Columna Derecha: TABLA UNIFICADA (Base + Extras) -->
+        <div class="col-md-8">
+            <div class="card shadow-sm border-0 rounded-4">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3"><i class="bi bi-receipt me-2"></i>Composición Completa del Plato</h5>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Aplica a...</th>
+                                    <th>Ingrediente</th>
+                                    <th>Cantidad</th>
+                                    <th>Costo</th>
+                                    <th class="text-center">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for r in receta %}
+                                <tr>
+                                    <td>
+                                        <span class="badge {% if r.origen == 'base' %}bg-primary{% else %}bg-info text-dark{% endif %} shadow-sm">
+                                            {{ r.aplica_a }}
+                                        </span>
+                                    </td>
+                                    <td><strong>{{ r.nombre }}</strong></td>
+                                    <td>{{ r.cantidad_requerida }} {{ r.unidad_medida }}</td>
+                                    <td class="text-danger fw-bold">${{ "{:,.2f}".format(r.cantidad_requerida * r.precio_compra) }}</td>
+                                    <td class="text-center">
+                                        <div class="btn-group">
+                                            {# BOTÓN EDITAR (Sube datos al form) #}
+                                            <button type="button" class="btn btn-sm btn-outline-primary border-0" 
+                                                    onclick="prepararEdicionUniversal('{{ r.origen }}', '{{ r.id_u }}', '{{ r.id_insumo if r.id_insumo else "" }}', '{{ r.cantidad_requerida }}')"
+                                                    title="Editar">
+                                                <i class="bi bi-pencil-square"></i>
+                                            </button>
+
+                                            {# BOTÓN ELIMINAR (Ruta Universal) #}
+                                            <form action="{{ url_for('eliminar_ingrediente_universal', id_u=r.id_u, tipo=r.origen) }}" 
+                                                  method="POST" 
+                                                  onsubmit="return confirm('¿Eliminar {{ r.nombre }}?')">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger border-0">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center py-4 text-muted">
+                                        No hay componentes configurados.
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .x-small { font-size: 0.75rem; }
+    .btn-outline-primary:hover { background-color: #0d6efd; color: white; }
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+/**
+ * Prepara el formulario para editar. 
+ * Detecta si el ingrediente es de la base o de una variante.
+ */
+function prepararEdicionUniversal(origen, idU, idInsumo, cantidad) {
+    const selectDestino = document.getElementById('select-destino');
+    const selectInsumo = document.getElementById('select-insumo');
+    const inputCantidad = document.getElementById('input-cantidad');
+    const btnGuardar = document.getElementById('btn-submit-receta');
+    const btnCancelar = document.getElementById('btn-cancelar-edicion');
+    const titulo = document.getElementById('titulo-formulario');
+
+    // 1. Setear Destino (Si es opción, buscamos el valor opt_ID)
+    // Nota: El id_u en el caso de opciones es el ID de opciones_insumos, no el de la opción.
+    // Para simplificar la edición, el usuario debe seleccionar manualmente el destino si es extra,
+    // o podemos intentar deducirlo si guardáramos el id_opcion en la tabla unificada.
+    if (origen === 'base') {
+        selectDestino.value = 'base';
+    }
+
+    // 2. Setear Insumo y Cantidad
+    // Para el ID de insumo, si no lo tenemos en la tabla unificada, el usuario deberá elegirlo.
+    // Sugerencia: En el app.py, asegúrate de pasar 'id_insumo' en la consulta SQL.
+    if (idInsumo) selectInsumo.value = idInsumo;
+    inputCantidad.value = parseFloat(cantidad);
+
+    // 3. UI
+    titulo.innerHTML = '<i class="bi bi-pencil-square me-2 text-primary"></i>Modificar Componente';
+    btnGuardar.classList.replace('btn-danger', 'btn-primary');
+    btnGuardar.innerHTML = 'Actualizar Composición';
+    btnCancelar.classList.remove('d-none');
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    inputCantidad.focus();
+}
+
+function cancelarEdicion() {
+    const btnGuardar = document.getElementById('btn-submit-receta');
+    const btnCancelar = document.getElementById('btn-cancelar-edicion');
+    const titulo = document.getElementById('titulo-formulario');
+
+    document.getElementById('form-receta').reset();
+    titulo.innerHTML = '<i class="bi bi-plus-circle me-2"></i>Vincular Insumo';
+    btnGuardar.classList.replace('btn-primary', 'btn-danger');
+    btnGuardar.innerHTML = 'Guardar en Composición';
+    btnCancelar.classList.add('d-none');
+}
+</script>
+{% endblock %}

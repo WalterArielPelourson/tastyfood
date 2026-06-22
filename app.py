@@ -1,78 +1,136 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, current_app
-import sqlite3
-from datetime import datetime, timedelta
-import math
-import requests
-import json
+# 1. Importaciones de librerías estándar
 import os
 import sys
+import sqlite3
+import json
+import math
+import secrets  # Necesario para los tokens de seguimiento
+import requests
+import urllib.parse
+import mercadopago
+from datetime import datetime, timedelta, time
+# Hora
+import pytz
+from datetime import datetime, timedelta, time
 
-# Importar Flask-Login y Werkzeug para autenticación
+# 2. Importaciones de Flask y extensiones
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, current_app, abort,render_template_string
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
-# Importar configuración
+# 3. Importaciones de módulos locales (tus archivos)
+from models import Usuario, Plato, Pedido 
+#from config import (
+#    GOOGLE_MAPS_API_KEY, MAX_PEDIDOS_POR_FRANJA_HORARIA,
+#    RADIO_ENVIO_CUADRAS, CUADRA_METROS, DB_NAME,
+#    SUCURSAL_LAT, SUCURSAL_LON, HORA_APERTURA, HORA_CIERRE, INTERVALO_FRANJAS_MINUTOS,
+#    DEFAULT_COMPANY_FOR_ORDERS
+#)
+# Busca esta sección al principio de app.py
 from config import (
     GOOGLE_MAPS_API_KEY, MAX_PEDIDOS_POR_FRANJA_HORARIA,
     RADIO_ENVIO_CUADRAS, CUADRA_METROS, DB_NAME,
-    SUCURSAL_LAT, SUCURSAL_LON, HORA_APERTURA, HORA_CIERRE, INTERVALO_FRANJAS_MINUTOS,
-    DEFAULT_COMPANY_FOR_ORDERS
+    SUCURSAL_LAT, SUCURSAL_LON, HORA_APERTURA, HORA_CIERRE, 
+    INTERVALO_FRANJAS_MINUTOS, DEFAULT_COMPANY_FOR_ORDERS,
+    HORARIOS_TURNOS  # <--- AGREGA ESTA LÍNEA AQUÍ
 )
 
-app = Flask(__name__)
-app.secret_key = 'super_secreto_de_casa_comida_web_202024' # CAMBIA ESTO POR UNA CLAVE MÁS SEGURA EN PRODUCCIÓN
 
-# Inicializar Flask-Login
+VALOR_PUNTO_POR_PESO = 0.01  # Significa que $100 = 1 punto
+
+# 4. INSTANCIACIÓN DE LA APP (Debe ir antes de cualquier configuración de app.config)
+app = Flask(__name__)
+app.secret_key = 'super_secreto_de_casa_comida_web_202024' 
+
+
+
+
+# 5. Configuración de subida de imágenes
+# Esto detecta la ruta real de tu carpeta sin importar dónde esté el proyecto
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'static', 'uploads', 'platos')
+
+# ... (después de los imports y de crear la instancia 'app')
+
+# Configuración de subida de imágenes
+UPLOAD_FOLDER = 'static/uploads/platos'
+
+# ESTA ES LA LÍNEA QUE TE FALTA O ESTÁ MAL UBICADA:
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Asegurar que la carpeta exista
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# Ahora la función ya puede encontrar ALLOWED_EXTENSIONS
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# Crear la carpeta si no existe
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# 6. Inicializar Flask-Login
 login_manager = LoginManager()
 login_manager.init_app(app)
-login_manager.login_view = 'login' # Define la vista a la que redirigir si se requiere login
+login_manager.login_view = 'login' 
 login_manager.login_message = "Por favor, inicie sesión para acceder a esta página."
 login_manager.login_message_category = "warning"
 
-# --- Constante para el costo de envío por defecto si no está en DB ---
+# 7. Constantes globales
 DEFAULT_ENVIO_COSTO = 500.00
-# --- Costo por envío al repartidor (valor por defecto, también configurable en DB) ---
 DEFAULT_PAGO_REPARTIDOR_POR_ENVIO = 300.00
+
+# 8. Equivalencia: 1 punto = $1 peso de descuento (puedes ajustarlo)
+VALOR_PESO_POR_PUNTO_CANJE = 1.0
+
+
+# Configuración Hora
+ARG_TZ = pytz.timezone('America/Argentina/Buenos_Aires')
+
+def get_now_arg():
+    """Retorna el objeto datetime actual con la zona horaria de Argentina."""
+    return datetime.now(ARG_TZ)
+
+def get_now_iso():
+    """Retorna la fecha y hora actual en string formato ISO para la DB."""
+    return get_now_arg().strftime('%Y-%m-%d %H:%M:%S')
+
+
 
 # --- Funciones de Base de Datos ---
 def conectar_db():
     conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row # Permite acceder a las columnas por nombre
+    conn.row_factory = sqlite3.Row 
     return conn
 
-def crear_tablas():
-    """Crea las tablas de la base de datos si no existen y añade columnas si faltan."""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
 
+
+def crear_tablas():
+    conn = conectar_db(); cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS platos (
-            id_plato INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            descripcion TEXT,
-            precio REAL NOT NULL,
-            activo INTEGER DEFAULT 1,
-            id_empresa INTEGER,
-            rubro TEXT, 
-            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS repartidores (
-            id_repartidor INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL,
-            apellido TEXT NOT NULL,
-            telefono TEXT,
-            activo INTEGER DEFAULT 1,
-            id_empresa INTEGER,
-            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
-        )
-    """)
-
+            id_plato INTEGER PRIMARY KEY AUTOINCREMENT, 
+            nombre TEXT NOT NULL, descripcion TEXT, 
+            precio REAL NOT NULL, 
+            activo INTEGER DEFAULT 1, 
+            id_empresa INTEGER, 
+            rubro TEXT,
+            imagen TEXT)
+        """)
+    cursor.execute("CREATE TABLE IF NOT EXISTS repartidores (id_repartidor INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL, apellido TEXT NOT NULL, telefono TEXT, activo INTEGER DEFAULT 1, id_empresa INTEGER)")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pedidos (
             id_pedido INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT UNIQUE, -- <--- NUEVA COLUMNA
             cliente_nombre TEXT NOT NULL,
             cliente_apellido TEXT NOT NULL,
             direccion_entrega TEXT NOT NULL,
@@ -82,2523 +140,3608 @@ def crear_tablas():
             costo_total REAL NOT NULL,
             forma_pago TEXT NOT NULL,
             estado_pago TEXT NOT NULL DEFAULT 'Pendiente',
+            estado_envio TEXT DEFAULT 'Recibido',
             fecha_creacion TEXT NOT NULL,
             fecha_pago TEXT,
             lat_cliente REAL,
             lon_cliente REAL,
             id_repartidor INTEGER,
-            id_empresa INTEGER,
-            FOREIGN KEY(id_repartidor) REFERENCES repartidores(id_repartidor),
-            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
+            id_empresa INTEGER
         )
     """)
-
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS items_pedido (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            id_pedido INTEGER NOT NULL,
+        CREATE TABLE IF NOT EXISTS empresas (
+            id_empresa INTEGER PRIMARY KEY AUTOINCREMENT, 
+            nombre TEXT NOT NULL UNIQUE, 
+            telefono TEXT, 
+            direccion TEXT, -- Seguiremos guardando la dirección completa aquí para compatibilidad
+            calle TEXT,
+            altura TEXT,
+            localidad TEXT,
+            provincia TEXT,
+            activo INTEGER DEFAULT 1
+        )
+    """)
+    
+    cursor.execute("CREATE TABLE IF NOT EXISTS items_pedido (id INTEGER PRIMARY KEY AUTOINCREMENT, id_pedido INTEGER NOT NULL, id_plato INTEGER NOT NULL, cantidad INTEGER NOT NULL, precio_unitario REAL NOT NULL)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS ingresos_egresos (id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT NOT NULL, monto REAL NOT NULL, descripcion TEXT, fecha_hora TEXT NOT NULL, id_pedido_origen INTEGER, id_repartidor_origen INTEGER, id_empresa INTEGER)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT, id_empresa INTEGER)")
+    #cursor.execute("CREATE TABLE IF NOT EXISTS empresas (id_empresa INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, telefono TEXT, direccion TEXT, activo INTEGER DEFAULT 1)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS roles (id_rol INTEGER PRIMARY KEY AUTOINCREMENT, nombre_rol TEXT NOT NULL UNIQUE)")
+    cursor.execute("CREATE TABLE IF NOT EXISTS usuarios (id_usuario INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, nombre TEXT NOT NULL, apellido TEXT NOT NULL, id_rol INTEGER NOT NULL, id_empresa INTEGER, activo INTEGER DEFAULT 1, primer_login_requerido INTEGER DEFAULT 1)")
+    
+    # Dentro de crear_tablas() en app.py
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS plato_modificadores (
+            id_modificador INTEGER PRIMARY KEY AUTOINCREMENT,
             id_plato INTEGER NOT NULL,
-            cantidad INTEGER NOT NULL,
-            precio_unitario REAL NOT NULL,
-            FOREIGN KEY(id_pedido) REFERENCES pedidos(id_pedido),
+            nombre TEXT NOT NULL, -- Ej: "Punto de la carne", "Agregados"
+            tipo TEXT CHECK( tipo IN ('radio', 'checkbox') ) NOT NULL, -- radio = obligatorio elegir uno, checkbox = múltiples
+            obligatorio INTEGER DEFAULT 0, -- 1 = Sí, 0 = No
             FOREIGN KEY(id_plato) REFERENCES platos(id_plato)
         )
     """)
 
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ingresos_egresos (
+        CREATE TABLE IF NOT EXISTS plato_opciones (
+            id_opcion INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_modificador INTEGER NOT NULL,
+            nombre TEXT NOT NULL, -- Ej: "Bien cocida", "Bacon"
+            precio_extra REAL DEFAULT 0, -- Ej: 500.00
+            FOREIGN KEY(id_modificador) REFERENCES plato_modificadores(id_modificador)
+        )
+    """)
+
+    # Tabla para guardar qué modificadores eligió el cliente en su pedido
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS items_pedido_modificadores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tipo TEXT NOT NULL,
-            monto REAL NOT NULL,
-            descripcion TEXT,
-            fecha_hora TEXT NOT NULL,
-            id_pedido_origen INTEGER,
-            id_repartidor_origen INTEGER,
-            id_empresa INTEGER,
-            FOREIGN KEY(id_pedido_origen) REFERENCES pedidos(id_pedido),
-            FOREIGN KEY(id_repartidor_origen) REFERENCES repartidores(id_repartidor),
-            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
+            id_item_pedido INTEGER NOT NULL,
+            nombre_modificador TEXT, -- Ej: "Punto de carne"
+            nombre_opcion TEXT, -- Ej: "A punto"
+            precio_pagado REAL, -- Guardamos el precio del extra en ese momento
+            FOREIGN KEY(id_item_pedido) REFERENCES items_pedido(id)
         )
     """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS configuracion (
-            clave TEXT PRIMARY KEY,
-            valor TEXT,
-            id_empresa INTEGER,
-            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS empresas (
-            id_empresa INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT NOT NULL UNIQUE,
-            telefono TEXT,  
-            direccion TEXT, 
-            activo INTEGER DEFAULT 1
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS roles (
-            id_rol INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre_rol TEXT NOT NULL UNIQUE
-        )
-    """)
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id_usuario INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT NOT NULL UNIQUE,
-            password TEXT NOT NULL,
-            nombre TEXT NOT NULL,
-            apellido TEXT NOT NULL,
-            id_rol INTEGER NOT NULL,
-            id_empresa INTEGER,
-            activo INTEGER DEFAULT 1,
-            primer_login_requerido INTEGER DEFAULT 1,
-            FOREIGN KEY(id_rol) REFERENCES roles(id_rol),
-            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
-        )
-    """)
-
-    # --- Comprobar y añadir columnas si faltan (para migraciones sin borrar DB) ---
-    cursor.execute("PRAGMA table_info(pedidos)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if 'id_repartidor' not in columns:
-        cursor.execute("ALTER TABLE pedidos ADD COLUMN id_repartidor INTEGER REFERENCES repartidores(id_repartidor)")
-        print("Columna 'id_repartidor' añadida a la tabla 'pedidos'.")
-    if 'id_empresa' not in columns:
-        cursor.execute("ALTER TABLE pedidos ADD COLUMN id_empresa INTEGER REFERENCES empresas(id_empresa)")
-        print("Columna 'id_empresa' añadida a la tabla 'pedidos'.")
-
-    cursor.execute("PRAGMA table_info(ingresos_egresos)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if 'id_repartidor_origen' not in columns:
-        cursor.execute("ALTER TABLE ingresos_egresos ADD COLUMN id_repartidor_origen INTEGER REFERENCES repartidores(id_repartidor)")
-        print("Columna 'id_repartidor_origen' añadida a la tabla 'ingresos_egresos'.")
-    if 'id_empresa' not in columns:
-        cursor.execute("ALTER TABLE ingresos_egresos ADD COLUMN id_empresa INTEGER REFERENCES empresas(id_empresa)")
-        print("Columna 'id_empresa' añadida a la tabla 'ingresos_egresos'.")
-
-    cursor.execute("PRAGMA table_info(platos)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if 'id_empresa' not in columns:
-        cursor.execute("ALTER TABLE platos ADD COLUMN id_empresa INTEGER REFERENCES empresas(id_empresa)")
-        print("Columna 'id_empresa' añadida a la tabla 'platos'.")
-    if 'rubro' not in columns:
-        cursor.execute("ALTER TABLE platos ADD COLUMN rubro TEXT")
-        print("Columna 'rubro' añadida a la tabla 'platos'.")
-
-    cursor.execute("PRAGMA table_info(repartidores)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if 'id_empresa' not in columns:
-        cursor.execute("ALTER TABLE repartidores ADD COLUMN id_empresa INTEGER REFERENCES empresas(id_empresa)")
-        print("Columna 'id_empresa' añadida a la tabla 'repartidores'.")
-
-    cursor.execute("PRAGMA table_info(configuracion)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if 'id_empresa' not in columns:
-        cursor.execute("ALTER TABLE configuracion ADD COLUMN id_empresa INTEGER REFERENCES empresas(id_empresa)")
-        print("Columna 'id_empresa' añadida a la tabla 'configuracion'.")
     
-    cursor.execute("PRAGMA table_info(empresas)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if 'telefono' not in columns:
-        cursor.execute("ALTER TABLE empresas ADD COLUMN telefono TEXT")
-        print("Columna 'telefono' añadida a la tabla 'empresas'.")
-    if 'direccion' not in columns:
-        cursor.execute("ALTER TABLE empresas ADD COLUMN direccion TEXT")
-        print("Columna 'direccion' añadida a la tabla 'empresas'.")
+    # Dentro de crear_tablas() en app.py
 
-    cursor.execute("INSERT OR IGNORE INTO roles (id_rol, nombre_rol) VALUES (1, 'super_admin')")
-    cursor.execute("INSERT OR IGNORE INTO roles (id_rol, nombre_rol) VALUES (2, 'admin_empresa')")
-    cursor.execute("INSERT OR IGNORE INTO roles (id_rol, nombre_rol) VALUES (3, 'empleado')")
+    # 1. Tabla de Clientes (CRM)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS clientes (
+            id_cliente INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT,
+            apellido TEXT,
+            telefono TEXT UNIQUE, -- El teléfono será la clave del cliente
+            email TEXT,
+            puntos INTEGER DEFAULT 0,
+            id_empresa INTEGER,
+            fecha_registro TEXT
+        )
+    """)
 
-    conn.commit()
-    conn.close()
+    # 2. Tabla de Cupones
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cupones (
+            id_cupon INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT NOT NULL, -- Ej: 'BIENVENIDA20'
+            tipo TEXT CHECK( tipo IN ('porcentaje', 'monto') ) NOT NULL,
+            valor REAL NOT NULL, -- Ej: 20 (para 20%) o 500 (para $500)
+            minimo_compra REAL DEFAULT 0,
+            activo INTEGER DEFAULT 1,
+            id_empresa INTEGER
+        )
+    """)
+    
+    # 1. Tabla de Materia Prima (Insumos)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS insumos (
+            id_insumo INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            unidad_medida TEXT, -- Ej: 'kg', 'unidades', 'litros'
+            stock_actual REAL DEFAULT 0,
+            stock_minimo REAL DEFAULT 0, -- Para alertas
+            precio_compra REAL DEFAULT 0, -- Para calcular el costo real del plato
+            id_empresa INTEGER,
+            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
+        )
+    """)
 
-def guardar_configuracion(clave, valor, id_empresa=None):
-    """Guarda un par clave-valor en la tabla de configuración, opcionalmente por empresa."""
-    conn = conectar_db()
-    cursor = conn.cursor()
-    if id_empresa:
-        cursor.execute("REPLACE INTO configuracion (clave, valor, id_empresa) VALUES (?, ?, ?)", (clave, str(valor), id_empresa))
-    else:
-        cursor.execute("REPLACE INTO configuracion (clave, valor, id_empresa) VALUES (?, ?, NULL)", (clave, str(valor)))
-    conn.commit()
-    conn.close()
+    # 2. Tabla de Recetas (Relación Plato -> Insumos)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS recetas (
+            id_receta INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_plato INTEGER,
+            id_insumo INTEGER,
+            cantidad_requerida REAL, -- Ej: 0.200 (para 200g de carne)
+            FOREIGN KEY(id_plato) REFERENCES platos(id_plato),
+            FOREIGN KEY(id_insumo) REFERENCES insumos(id_insumo)
+        )
+    """)
 
-def cargar_configuracion(clave, valor_defecto=None, id_empresa=None):
-    """Carga un valor de la tabla de configuración por su clave, opcionalmente por empresa."""
-    conn = conectar_db()
-    cursor = conn.cursor()
-    if id_empresa:
-        cursor.execute("SELECT valor FROM configuracion WHERE clave = ? AND id_empresa = ?", (clave, id_empresa))
-    else:
-        cursor.execute("SELECT valor FROM configuracion WHERE clave = ? AND id_empresa IS NULL", (clave,))
-
-    resultado = cursor.fetchone()
-    conn.close()
-    if resultado:
-        return resultado['valor']
-    return valor_defecto
-
-def get_costo_envio():
-    """Obtiene el costo de envío desde la base de datos o usa un valor por defecto."""
-    if current_user.is_authenticated and current_user.id_empresa:
-        costo = cargar_configuracion('ENVIO_COSTO', str(DEFAULT_ENVIO_COSTO), current_user.id_empresa)
-    else:
-        costo = cargar_configuracion('ENVIO_COSTO', str(DEFAULT_ENVIO_COSTO), None)
+    # 3. Tabla para Insumos de los Modificadores (Ej: El insumo que gasta el 'Extra Bacon')
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS opciones_insumos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_opcion INTEGER, -- Vinculado a plato_opciones
+            id_insumo INTEGER,
+            cantidad_requerida REAL,
+            FOREIGN KEY(id_opcion) REFERENCES plato_opciones(id_opcion),
+            FOREIGN KEY(id_insumo) REFERENCES insumos(id_insumo)
+        )
+    """)
+    
+    # Dentro de crear_tablas() en app.py
     try:
-        return float(costo)
-    except ValueError:
-        return DEFAULT_ENVIO_COSTO
+        cursor.execute("ALTER TABLE empresas ADD COLUMN horarios_json TEXT")
+    except sqlite3.OperationalError:
+        pass # Ya existe
 
-def get_pago_repartidor_por_envio():
-    """Obtiene el pago por envío al repartidor desde la base de datos o usa un valor por defecto."""
-    if current_user.is_authenticated and current_user.id_empresa:
-        pago = cargar_configuracion('PAGO_REPARTIDOR_POR_ENVIO', str(DEFAULT_PAGO_REPARTIDOR_POR_ENVIO), current_user.id_empresa)
-    else:
-        pago = cargar_configuracion('PAGO_REPARTIDOR_POR_ENVIO', str(DEFAULT_PAGO_REPARTIDOR_POR_ENVIO), None)
+
+    # MIGRACIÓN: Agregar id_cliente y descuento_aplicado a pedidos
+    #numero de celular de usuarios
     try:
-        return float(pago)
-    except ValueError:
-        return DEFAULT_PAGO_REPARTIDOR_POR_ENVIO
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN telefono TEXT")
+    except:
+        pass # Ya existe
 
-def _agregar_super_admin_inicial():
-    """Agrega un usuario super_admin inicial si no existe ninguno,
-       y una empresa por defecto con un admin_empresa si no existen."""
-    conn = conectar_db()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM usuarios WHERE id_rol = (SELECT id_rol FROM roles WHERE nombre_rol = 'super_admin')")
-    if cursor.fetchone()[0] == 0:
-        hashed_password = generate_password_hash("admin_password_inicial_segura", method='pbkdf2:sha256')
-        cursor.execute("""
-            INSERT INTO usuarios (email, password, nombre, apellido, id_rol, id_empresa, activo, primer_login_requerido)
-            VALUES (?, ?, ?, ?, (SELECT id_rol FROM roles WHERE nombre_rol = 'super_admin'), NULL, 1, 0)
-        """, ("admin@tudominio.com", hashed_password, "Super", "Admin",))
-        conn.commit()
-        print("Usuario 'super_admin' inicial creado: admin@tudominio.com con la contraseña 'admin_password_inicial_segura' (¡CÁMBIALA!)")
-
-    default_company_id = DEFAULT_COMPANY_FOR_ORDERS
-    cursor.execute("INSERT OR IGNORE INTO empresas (id_empresa, nombre, telefono, direccion, activo) VALUES (?, ?, NULL, NULL, 1)",
-                   (default_company_id, "Empresa Principal por Defecto"))
-    conn.commit()
-    print(f"Empresa por defecto (ID: {default_company_id}, Nombre: Empresa Principal por Defecto) asegurada.")
-
-    cursor.execute("SELECT COUNT(*) FROM usuarios WHERE id_rol = (SELECT id_rol FROM roles WHERE nombre_rol = 'admin_empresa') AND id_empresa = ?", (default_company_id,))
-    if cursor.fetchone()[0] == 0:
-        hashed_password = generate_password_hash("empresa_password_segura", method='pbkdf2:sha256')
-        cursor.execute("""
-            INSERT INTO usuarios (email, password, nombre, apellido, id_rol, id_empresa, activo, primer_login_requerido)
-            VALUES (?, ?, ?, ?, (SELECT id_rol FROM roles WHERE nombre_rol = 'admin_empresa'), ?, 1, 1)
-        """, ("admin_empresa@empresa.com", hashed_password, "Admin", "Empresa", default_company_id))
-        conn.commit()
-        print(f"Usuario 'admin_empresa' inicial creado para Empresa Principal (ID: {default_company_id}): admin_empresa@empresa.com con la contraseña 'empresa_password_segura' (¡CÁMBIALA!)")
-
-    conn.close()
-
-def _agregar_platos_ejemplo_a_db():
-    """Agrega platos de ejemplo a la DB si no existen, asignándolos a la empresa por defecto."""
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM platos")
-    if cursor.fetchone()[0] == 0:
-        default_company_id = DEFAULT_COMPANY_FOR_ORDERS
-
-        platos_ejemplo = [
-            ("Hamburguesa Clásica", "Carne 180gr, lechuga, tomate, queso cheddar, cebolla caramelizada, pepinillos.", 3500.00, "Comidas"),
-            ("Pizza Muzzarella Grande", "Salsa de tomate casera, abundante muzzarella, aceitunas verdes, orégano.", 4200.00, "Pizzas"),
-            ("Milanesa Napolitana (con fritas)", "Tierna milanesa de ternera, salsa, jamón, queso gratinado, acompañada de papas fritas.", 5800.00, "Comidas"),
-            ("Ensalada César con Pollo", "Lechuga romana, crutones, queso parmesano, aderezo César y tiras de pollo grillado.", 3000.00, "Ensaladas"),
-            ("Empanadas de Carne (unidad)", "Carne picada a cuchillo, huevo, aceitunas. Jugosas y sabrosas.", 600.00, "Entradas"),
-            ("Gaseosa Coca-Cola", "Lata de 354ml, bien fría.", 800.00, "Bebidas"),
-            ("Agua Mineral sin Gas", "Botella de 500ml.", 700.00, "Bebidas"),
-            ("Flan Casero con Dulce de Leche y Crema", "Receta de la abuela, irresistible.", 2500.00, "Postres"),
-            ("Cerveza Artesanal IPA", "Pinta de cerveza artesanal de lupulado intenso.", 1500.00, "Bebidas"),
-        ]
-        for nombre, desc, precio, rubro in platos_ejemplo:
-            cursor.execute("INSERT INTO platos (nombre, descripcion, precio, activo, id_empresa, rubro) VALUES (?, ?, ?, 1, ?, ?)",
-                           (nombre, desc, precio, default_company_id, rubro))
-        conn.commit()
-        print(f"Platos de ejemplo agregados a la base de datos para la empresa ID {default_company_id}.")
-    conn.close()
-
-def _agregar_repartidor_ejemplo_a_db():
-    """Agrega un repartidor de ejemplo a la DB si no existen repartidores, asignándolos a la empresa por defecto."""
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM repartidores")
-    if cursor.fetchone()[0] == 0:
-        default_company_id = DEFAULT_COMPANY_FOR_ORDERS
-
-        cursor.execute("INSERT INTO repartidores (nombre, apellido, telefono, activo, id_empresa) VALUES (?, ?, ?, 1, ?)",
-                       ("Juan", "Perez", "1123456789", default_company_id))
-        cursor.execute("INSERT INTO repartidores (nombre, apellido, telefono, activo, id_empresa) VALUES (?, ?, ?, 1, ?)",
-                       ("Maria", "Gomez", "1198765432", default_company_id))
-        conn.commit()
-        print(f"Repartidores de ejemplo agregados a la base de datos para la empresa ID {default_company_id}.")
-    conn.close()
+    try:
+        cursor.execute("ALTER TABLE empresas ADD COLUMN mp_access_token TEXT")
+    except:
+        pass
+            
+    
+    try:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN cupon_codigo TEXT")
+    except:
+        pass
+        
+    try:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN eta_minutos INTEGER")
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN fecha_salida_reparto TEXT")
+    except:
+        pass
 
 
-# --- Clases de Modelo ---
-class Plato:
-    def __init__(self, id_plato, nombre, descripcion, precio, activo=1, id_empresa=None, rubro=None):
-        self.id_plato = id_plato
-        self.nombre = nombre
-        self.descripcion = descripcion
-        self.precio = precio
-        self.activo = activo
-        self.id_empresa = id_empresa
-        self.rubro = rubro 
+    try:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN id_cliente INTEGER")
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN descuento_aplicado REAL DEFAULT 0")
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN telefono_cliente TEXT") # <--- Importante para CRM
+    except:
+        pass    
+        
+    # Migraciones
+    cursor.execute("PRAGMA table_info(pedidos)")
+    cols = [col[1] for col in cursor.fetchall()]
+    if 'estado_envio' not in cols: cursor.execute("ALTER TABLE pedidos ADD COLUMN estado_envio TEXT DEFAULT 'Recibido'")
+    
+    cursor.execute("INSERT OR IGNORE INTO roles (id_rol, nombre_rol) VALUES (1, 'super_admin'), (2, 'admin_empresa'), (3, 'empleado'), (4, 'repartidor')")
+    
+    # MIGRACIÓN: Por si la tabla ya existe, intentamos añadir la columna
+    # Dentro de crear_tablas() en app.py, agrega esta migración:
+    try:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN pago_repartidor_status TEXT DEFAULT 'Pendiente'")
+    except sqlite3.OperationalError:
+        pass # Ya existe
+    
+    # Dentro de crear_tablas() en app.py, añade estas columnas de tiempo:
+    try:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN fecha_preparacion TEXT")
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN fecha_despacho TEXT")
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN fecha_entrega TEXT")
+    except sqlite3.OperationalError:
+        pass # Ya existen
 
-class Repartidor:
-    def __init__(self, id_repartidor, nombre, apellido, telefono, activo=1, id_empresa=None):
-        self.id_repartidor = id_repartidor
-        self.nombre = nombre
-        self.apellido = apellido
-        self.telefono = telefono
-        self.activo = activo
-        self.id_empresa = id_empresa
+    #Repartidor Usuario
+    try:
+        cursor.execute("ALTER TABLE usuarios ADD COLUMN id_repartidor_vinculado INTEGER")
+    except:
+        pass
+    
+    
+    
+    try:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN token TEXT UNIQUE")
+    except sqlite3.OperationalError:
+        pass # La columna ya existe
+    
+    try:
+        cursor.execute("ALTER TABLE platos ADD COLUMN imagen TEXT")
+    except sqlite3.OperationalError:
+        pass 
+    
+    for col in ['calle', 'altura', 'localidad', 'provincia']:
+        try:
+            cursor.execute(f"ALTER TABLE empresas ADD COLUMN {col} TEXT")
+        except sqlite3.OperationalError:
+            pass 
+        
+    # Dentro de crear_tablas, añade estas migraciones:
+    try:
+        cursor.execute("ALTER TABLE empresas ADD COLUMN lat REAL")
+        cursor.execute("ALTER TABLE empresas ADD COLUMN lon REAL")
+    except sqlite3.OperationalError:
+        pass # Ya existen
+    
+    
+    conn.commit(); conn.close()
 
-    @property
-    def nombre_completo(self):
-        return f"{self.nombre} {self.apellido}"
 
-class Pedido:
-    def __init__(self, id_pedido, cliente_nombre, cliente_apellido, direccion_entrega, es_envio,
-                 horario_entrega, costo_envio, costo_total, forma_pago, estado_pago, fecha_creacion,
-                 lat_cliente, lon_cliente, fecha_pago=None, id_repartidor=None, id_empresa=None):
-        self.id_pedido = id_pedido
-        self.cliente_nombre = cliente_nombre
-        self.cliente_apellido = cliente_apellido
-        self.direccion_entrega = direccion_entrega
-        self.es_envio = bool(es_envio)
-        self.horario_entrega = datetime.strptime(horario_entrega, '%Y-%m-%d %H:%M:%S') if isinstance(horario_entrega, str) else horario_entrega
-        self.costo_envio = costo_envio
-        self.costo_total = costo_total
-        self.forma_pago = forma_pago
-        self.estado_pago = estado_pago
-        self.fecha_creacion = datetime.strptime(fecha_creacion, '%Y-%m-%d %H:%M:%S') if isinstance(fecha_creacion, str) else fecha_creacion
-        self.fecha_pago = datetime.strptime(fecha_pago, '%Y-%m-%d %H:%M:%S') if fecha_pago else None
-        self.lat_cliente = lat_cliente
-        self.lon_cliente = lon_cliente
-        self.id_repartidor = id_repartidor
-        self.id_empresa = id_empresa
-        self.repartidor = None
-        self.items = []
 
-    def agregar_item(self, plato, cantidad, precio_unitario):
-        self.items.append({"plato": plato, "cantidad": cantidad, "precio_unitario": precio_unitario})
-
-    def generar_ticket(self):
-        ticket_html = f"""
-        <div class="ticket">
-            <h4 class="text-center">TICKET DE PEDIDO #{self.id_pedido}</h4>
-            <hr>
-            <p><strong>Cliente:</strong> {self.cliente_nombre} {self.cliente_apellido}</p>
-            <p><strong>Dirección:</strong> {self.direccion_entrega}</p>
-            <p><strong>Tipo:</strong> {'Envío' if self.es_envio else 'Retiro en Sucursal'}</p>
-            <p><strong>Horario:</strong> {self.horario_entrega.strftime('%H:%M')} ({self.horario_entrega.strftime('%d/%m')})</p>
-        """
-        if self.es_envio and self.repartidor:
-            ticket_html += f"<p><strong>Repartidor:</strong> {self.repartidor.nombre_completo}</p>"
-
-        ticket_html += """<hr>
-            <h6>Detalle del Pedido:</h6>
-            <ul class="list-unstyled">
-        """
-        for item in self.items:
-            plato_nombre = item["plato"].nombre if isinstance(item["plato"], Plato) else item["plato"]
-            cantidad = item["cantidad"]
-            precio_unitario = item["precio_unitario"]
-            ticket_html += f"<li>{cantidad} x {plato_nombre} @ ${precio_unitario:,.2f} = ${cantidad * precio_unitario:,.2f}</li>"
-
-        ticket_html += "</ul>"
-        if self.es_envio:
-            ticket_html += f"<p><strong>Costo de Envío:</strong> ${self.costo_envio:,.2f}</p>"
-
-        ticket_html += f"""
-            <hr>
-            <p><strong>TOTAL: ${self.costo_total:,.2f}</strong></p>
-            <hr>
-            <p><strong>Forma de Pago:</strong> {self.forma_pago}</p>
-            <p><strong>Estado del Pago:</strong> {self.estado_pago}</p>
-        """
-        if self.fecha_pago:
-            ticket_html += f"<p><strong>Fecha de Pago:</strong> {self.fecha_pago.strftime('%d/%m/%Y %H:%M')}</p>"
-
-        ticket_html += f"""
-            <hr>
-            <p class="text-center">¡Gracias por su compra!</p>
-        </div>
-        """
-        return ticket_html
-
-class Empresa:
-    def __init__(self, id_empresa, nombre, telefono=None, direccion=None, activo=1):
-        self.id_empresa = id_empresa
-        self.nombre = nombre
-        self.telefono = telefono
-        self.direccion = direccion
-        self.activo = activo
-
-class Rol:
-    def __init__(self, id_rol, nombre_rol):
-        self.id_rol = id_rol
-        self.nombre_rol = nombre_rol
-
-class Usuario(UserMixin):
-    def __init__(self, id_usuario, email, password, nombre, apellido, id_rol, id_empresa, activo=1, primer_login_requerido=1, nombre_rol=None):
-        self.id = id_usuario
-        self.email = email
-        self.password = password
-        self.nombre = nombre
-        self.apellido = apellido
-        self.id_rol = id_rol
-        self.id_empresa = id_empresa
-        self.activo = activo
-        self.primer_login_requerido = primer_login_requerido
-        self.nombre_rol = nombre_rol
-
-    def get_id(self):
-        return str(self.id)
-
-    def is_active(self):
-        return bool(self.activo)
-
-    def get_full_name(self):
-        return f"{self.nombre} {self.apellido}"
-
-    def has_role(self, role_name):
-        return self.nombre_rol == role_name
 
 @login_manager.user_loader
 def load_user(user_id):
-    conn = conectar_db()
-    cursor = conn.cursor()
+    conn = conectar_db(); cursor = conn.cursor()
+    # Usamos LEFT JOIN para asegurar que traiga el nombre del rol
     cursor.execute("""
-        SELECT u.id_usuario, u.email, u.password, u.nombre, u.apellido,
-               u.id_rol, u.id_empresa, u.activo, u.primer_login_requerido,
-               r.nombre_rol
-        FROM usuarios u
-        JOIN roles r ON u.id_rol = r.id_rol
+        SELECT u.*, r.nombre_rol 
+        FROM usuarios u 
+        LEFT JOIN roles r ON u.id_rol = r.id_rol 
         WHERE u.id_usuario = ?
     """, (user_id,))
-    user_data = cursor.fetchone()
-    conn.close()
-
-    if user_data:
+    u = cursor.fetchone(); conn.close()
+    
+    if u: 
+        # Si por alguna razón nombre_rol es None, le asignamos un string vacío para evitar errores
+        n_rol = u['nombre_rol'] if u['nombre_rol'] else ""
+        
         return Usuario(
-            user_data['id_usuario'],
-            user_data['email'],
-            user_data['password'],
-            user_data['nombre'],
-            user_data['apellido'],
-            user_data['id_rol'],
-            user_data['id_empresa'],
-            user_data['activo'],
-            user_data['primer_login_requerido'],
-            user_data['nombre_rol']
+            id_usuario=u['id_usuario'], 
+            email=u['email'], 
+            password=u['password'], 
+            nombre=u['nombre'], 
+            apellido=u['apellido'], 
+            id_rol=u['id_rol'], 
+            id_empresa=u['id_empresa'], 
+            activo=u['activo'], 
+            primer_login_requerido=u['primer_login_requerido'], 
+            nombre_rol=n_rol, # <--- IMPORTANTE
+            id_repartidor_vinculado=u['id_repartidor_vinculado'],
+            telefono=u['telefono']
         )
     return None
 
-# --- Funciones de Google Maps y Geocodificación ---
 
-_info_restaurante = None
-
-def obtener_info_restaurante_google_maps_cached(nombre_restaurante):
-    global _info_restaurante, SUCURSAL_LAT, SUCURSAL_LON
-    if _info_restaurante:
-        return _info_restaurante
-
-    if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
-        print("Advertencia: API Key de Google Maps no configurada. Usando datos de ejemplo para el restaurante.")
-        _info_restaurante = {
-            "nombre": nombre_restaurante,
-            "direccion": "Dirección de ejemplo, 1234, Ciudad Ficticia",
-            "lat": SUCURSAL_LAT,
-            "lon": SUCURSAL_LON,
-            "horario_atencion": ["Lunes a Viernes: 09:00 - 23:00", "Sábado y Domingo: 10:00 - 00:00"],
-            "url_mapa": "https://maps.google.com/?q=Casa+de+Comida+Ejemplo"
-        }
-        return _info_restaurante
-
-    search_url = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
-    params_search = { "input": nombre_restaurante, "inputtype": "textquery", "fields": "place_id", "key": GOOGLE_MAPS_API_KEY, "language": "es" }
-    try:
-        response_search = requests.get(search_url, params=params_search, timeout=5)
-        response_search.raise_for_status()
-        data_search = response_search.json()
-        if data_search["status"] == "OK" and data_search["candidates"]:
-            place_id = data_search["candidates"][0]["place_id"]
-        else:
-            print(f"Error al buscar Place ID para '{nombre_restaurante}'. Status: {data_search.get('status')}. Error: {data_search.get('error_message')}")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error de red con Google Places (Search): {e}")
-        return None
-    except json.JSONDecodeError:
-        print("Error al procesar respuesta JSON de Google Places (Search).")
-        return None
-
-    details_url = "https://maps.googleapis.com/maps/api/place/details/json"
-    params_details = { "place_id": place_id, "fields": "name,formatted_address,geometry,opening_hours,url", "key": GOOGLE_MAPS_API_KEY, "language": "es" }
-    try:
-        response_details = requests.get(details_url, params=params_details, timeout=5)
-        response_details.raise_for_status()
-        data_details = response_details.json()
-        if data_details["status"] == "OK" and data_details["result"]:
-            result = data_details["result"]
-            _info_restaurante = {
-                "nombre": result.get("name", nombre_restaurante),
-                "direccion": result.get("formatted_address", "Dirección no disponible"),
-                "lat": result["geometry"]["location"]["lat"],
-                "lon": result["geometry"]["location"]["lng"],
-                "horario_atencion": result.get("opening_hours", {}).get("weekday_text", ["Horario no disponible"]),
-                "url_mapa": result.get("url", f"https://maps.google.com/?q={nombre_restaurante.replace(' ', '+')}")
-            }
-            SUCURSAL_LAT = _info_restaurante['lat']
-            SUCURSAL_LON = _info_restaurante['lon']
-            return _info_restaurante
-        else:
-            print(f"Error al obtener detalles del restaurante: {data_details.get('status')}. Error: {data_details.get('error_message')}")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error de red con Google Places (Details): {e}")
-        return None
-    except json.JSONDecodeError:
-        print("Error al procesar respuesta JSON de Google Places (Details).")
-        return None
-
-def obtener_coordenadas_desde_direccion(direccion):
+def verificar_disponibilidad_plato(id_plato, cantidad_solicitada=1):
     """
-    Convierte una dirección en latitud y longitud usando la API de Geocoding.
-    Si la API Key no es válida o hay un error, retorna coordenadas de ejemplo.
+    Verifica si hay stock suficiente en la tabla 'insumos' para cubrir 
+    la receta base de un plato multiplicado por la cantidad solicitada.
     """
-    if not GOOGLE_MAPS_API_KEY or GOOGLE_MAPS_API_KEY == "YOUR_GOOGLE_MAPS_API_KEY":
-        print("Advertencia: API Key de Google Maps no configurada. Usando coordenadas de ejemplo para la dirección.")
-        if "calle falsa 123" in direccion.lower(): return -34.6000, -58.4000
-        elif "avenida siempreviva 742" in direccion.lower(): return -34.6050, -58.3850
-        else: return -34.6100, -58.3900
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    # Buscamos los insumos requeridos por la receta base del plato
+    cursor.execute("""
+        SELECT i.nombre, i.stock_actual, r.cantidad_requerida
+        FROM recetas r
+        JOIN insumos i ON r.id_insumo = i.id_insumo
+        WHERE r.id_plato = ?
+    """, (id_plato,))
+    
+    ingredientes = cursor.fetchall()
+    conn.close()
+    
+    # Si no tiene receta cargada, asumimos que hay stock (o podrías decidir lo contrario)
+    if not ingredientes:
+        return True, None
+
+    for ing in ingredientes:
+        total_necesario = ing['cantidad_requerida'] * cantidad_solicitada
+        if ing['stock_actual'] < total_necesario:
+            # Retornamos Falso y el nombre del ingrediente que falta
+            return False, ing['nombre']
+            
+    return True, None
 
 
-    geocoding_url = "https://maps.googleapis.com/maps/api/geocode/json"
-    params = { "address": direccion, "key": GOOGLE_MAPS_API_KEY, "language": "es" }
+
+# --- Helpers ---
+
+@app.context_processor
+def inject_helpers():
+    return dict(cargar_configuracion=cargar_configuracion)
+
+
+def calcular_tiempo_ruta_osrm(lat_origen, lon_origen, lat_destino, lon_destino):
+    """
+    Calcula el tiempo de viaje en auto/moto usando calles reales (OSRM).
+    Retorna los minutos estimados.
+    """
+    # Formato OSRM: lon,lat;lon,lat
+    url = f"http://router.project-osrm.org/route/v1/driving/{lon_origen},{lat_origen};{lon_destino},{lat_destino}?overview=false"
+    
     try:
-        response = requests.get(geocoding_url, params=params, timeout=5)
-        response.raise_for_status()
+        response = requests.get(url, timeout=5)
         data = response.json()
-        if data["status"] == "OK" and data["results"]:
-            location = data["results"][0]["geometry"]["location"]
-            return location["lat"], location["lng"]
-        else:
-            print(f"No se pudieron obtener coordenadas para la dirección: {data.get('status')}. Error: {data.get('error_message')}")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error de red con Google Geocoding: {e}")
-        return None
-    except json.JSONDecodeError:
-        print("Error al procesar respuesta JSON de Google Geocoding.")
-        return None
+        if data['code'] == 'Ok':
+            # 'duration' viene en segundos, pasamos a minutos
+            segundos = data['routes'][0]['duration']
+            minutos = round(segundos / 60)
+            # Añadimos un margen de 5 minutos por semáforos/estacionamiento
+            return minutos + 5
+    except Exception as e:
+        print(f"Error calculando ruta: {e}")
+    
+    return None # Si falla, el sistema usará un valor por defecto
 
-def calcular_distancia_cuadras(lat1, lon1, lat2, lon2):
-    """
-    Calcula la distancia Haversine (línea recta) entre dos puntos geográficos
-    y la convierte aproximadamente a "cuadras".
-    """
-    R = 6371.0
-
-    lat1_rad, lon1_rad, lat2_rad, lon2_rad = map(math.radians, [lat1, lon1, lat2, lon2])
-    dlon = lon2_rad - lon1_rad
-    dlat = lat2_rad - lat1_rad
-
-    a = math.sin(dlat / 2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlon / 2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-    distancia_km = R * c
-    distancia_metros = distancia_km * 1000
-    distancia_cuadras = distancia_metros / CUADRA_METROS
-    return distancia_cuadras
-
-# --- Lógica de Negocio y Utilidades para la App Web ---
 
 def get_company_filter_conditions_and_params(table_alias=''):
-    """
-    Genera una lista de condiciones y los parámetros para filtrar por empresa para el usuario actual.
-    Si el usuario es super_admin, no añade condiciones de empresa.
-    Retorna (list_of_conditions, list_of_params).
-    """
-    conditions = []
-    params = []
-
+    cond, params = [], []
     if current_user.is_authenticated and not current_user.has_role('super_admin'):
-        if current_user.id_empresa:
-            if table_alias:
-                conditions.append(f"{table_alias}.id_empresa = ?")
-            else:
-                conditions.append("id_empresa = ?")
-            params.append(current_user.id_empresa)
+        col = f"{table_alias}.id_empresa" if table_alias else "id_empresa"
+        cond.append(f"{col} = ?"); params.append(current_user.id_empresa)
+    return cond, params
+
+def get_pago_repartidor(id_empresa=None):
+    # Si no pasan empresa, usamos la del usuario o la de por defecto
+    if id_empresa is None:
+        id_empresa = current_user.id_empresa if (current_user.is_authenticated and current_user.id_empresa) else DEFAULT_COMPANY_FOR_ORDERS
+    
+    # Buscamos en la DB la clave 'PAGO_REPARTIDOR'
+    costo = cargar_configuracion('PAGO_REPARTIDOR', str(DEFAULT_PAGO_REPARTIDOR_POR_ENVIO), id_empresa)
+    return float(costo)
+
+def obtener_coordenadas(direccion):
+    """
+    Busca coordenadas de forma GRATUITA usando OpenStreetMap (Nominatim).
+    No requiere API Key ni tarjeta de crédito.
+    """
+    # 1. Limpieza y preparación de la dirección
+    # Eliminamos espacios extra y aseguramos que termine en Argentina
+    direccion_limpia = direccion.strip()
+    if not direccion_limpia.lower().endswith("argentina"):
+        direccion_busqueda = f"{direccion_limpia}, Argentina"
+    else:
+        direccion_busqueda = direccion_limpia
+    
+    # 2. URL de Nominatim (OpenStreetMap)
+    url = "https://nominatim.openstreetmap.org/search"
+    
+    # 3. Parámetros de la consulta
+    params = {
+        'q': direccion_busqueda,
+        'format': 'json',
+        'limit': 1,
+        'addressdetails': 1
+    }
+    
+    # 4. Cabeceras (User-Agent es OBLIGATORIO para Nominatim)
+    headers = {
+        'User-Agent': 'RestauranteMultiSabor/1.0 (contacto@tusitio.com)' 
+    }
+    
+    try:
+        print(f"--- INICIANDO BÚSQUEDA GEOGRÁFICA ---")
+        print(f"Buscando dirección: {direccion_busqueda}")
+        
+        # Realizamos la petición con un timeout para que no se quede colgada la app
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        data = response.json()
+        
+        if data:
+            lat = float(data[0]['lat'])
+            lon = float(data[0]['lon'])
+            print(f"ÉXITO: Ubicación encontrada en Lat: {lat}, Lon: {lon}")
+            return lat, lon
         else:
-            conditions.append("1 = 0") # Asegura que no se muestre nada si el admin_empresa no tiene id_empresa
-    return conditions, params
+            print(f"AVISO: Nominatim no encontró resultados para: {direccion_busqueda}")
+            
+    except Exception as e:
+        print(f"ERROR en conexión de mapas: {e}")
+        
+    # Si falla, devolvemos None para que el sistema sepa que no pudo validar la distancia
+    return None, None
 
-def get_company_id_for_frontend_context():
-    """
-    Determina la ID de la empresa para operaciones de frontend (hacer pedido, carrito, etc.).
-    Si un usuario de empresa está logueado, usa su ID de empresa.
-    De lo contrario (público o super_admin), usa la DEFAULT_COMPANY_FOR_ORDERS.
-    """
-    if current_user.is_authenticated and not current_user.has_role('super_admin') and current_user.id_empresa:
-        return current_user.id_empresa
-    return DEFAULT_COMPANY_FOR_ORDERS
 
-def _generar_franjas_horarias_disponibles(company_id_for_franjas):
-    """
-    Genera una lista de franjas horarias futuras disponibles (no completas).
-    Cada franja es un string 'HH:MM'. Filtra por la empresa proporcionada.
-    """
-    franjas = []
-    hoy = datetime.now().date()
+def calcular_distancia_metros(lat1, lon1, lat2, lon2):
+    """Calcula la distancia en metros entre dos puntos."""
+    radio_tierra = 6371000  # Radio en metros
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * \
+        math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return radio_tierra * c
+
+
+
+#def obtener_franjas_disponibles(id_empresa=None):
+#    # 1. Traer configuración (puedes usar los de config.py o cargar de DB)
+#    h_apertura = HORA_APERTURA  # Ej: "11:00"
+#    h_cierre = HORA_CIERRE      # Ej: "23:00"
+#    intervalo = INTERVALO_FRANJAS_MINUTOS  # Ej: 15
+    
+#    franjas = []
+#    ahora = datetime.now()
+#    hoy = ahora.date()
+
+#    # Convertir strings de config a objetos datetime para hoy
+#    apertura_dt = datetime.combine(hoy, time.fromisoformat(h_apertura))
+#    cierre_dt = datetime.combine(hoy, time.fromisoformat(h_cierre))
+
+    # Definir el inicio: El máximo entre la hora de apertura 
+    # y "ahora" + 30 minutos (margen de preparación)
+#    margen_preparacion = ahora + timedelta(minutes=30)
+#    inicio = max(apertura_dt, margen_preparacion)
+
+    # Redondear al siguiente intervalo (Ej: si son 12:07 y el intervalo es 15, ir a 12:15)
+#    minutos_a_sumar = (intervalo - (inicio.minute % intervalo)) % intervalo
+#    actual = inicio + timedelta(minutes=minutos_a_sumar)
+#    actual = actual.replace(second=0, microsecond=0)
+
+    # --- INICIO DE CAMBIOS PARA VALIDACIÓN DE CAPACIDAD ---
+#    conn = conectar_db()
+#    cursor = conn.cursor()
+
+    # Generar la lista hasta el cierre validando disponibilidad en DB
+ #   while actual <= cierre_dt:
+ #       hora_str = actual.strftime("%H:%M")
+ #       # El formato debe coincidir con cómo guardas en la DB: 'YYYY-MM-DD HH:MM:00'
+ #       fecha_hora_busqueda = f"{hoy} {hora_str}:00"
+        
+        # Consultar cuántos pedidos existen ya para esa franja y esa empresa
+ #       cursor.execute("""
+ #           SELECT COUNT(*) FROM pedidos 
+ #           WHERE horario_entrega = ? AND id_empresa = ?
+ #       """, (fecha_hora_busqueda, id_empresa))
+        
+ #       cantidad_pedidos = cursor.fetchone()[0]
+        
+        # Solo agregar la franja si no se ha superado el máximo configurado
+ #       if cantidad_pedidos < MAX_PEDIDOS_POR_FRANJA_HORARIA:
+ #           franjas.append(hora_str)
+            
+ #       actual += timedelta(minutes=intervalo)
+    
+ #   conn.close()
+    # --- FIN DE CAMBIOS ---
+    
+ #   return franjas
+
+
+def obtener_horarios_empresa(id_empresa):
+    """Carga los horarios de la DB. Si no hay, devuelve un turno por defecto."""
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT horarios_json FROM empresas WHERE id_empresa = ?", (id_empresa,))
+    res = cursor.fetchone()
+    conn.close()
+    
+    if res and res['horarios_json']:
+        return json.loads(res['horarios_json'])
+    # Horario por defecto si la empresa es nueva o no tiene configurado
+    return [["08:00", "23:00"]]
+
+#def esta_abierto(id_empresa):
+#    """Comprueba si la empresa específica está abierta ahora."""
+#    turnos = obtener_horarios_empresa(id_empresa)
+#    ahora = datetime.now().time()
+#    
+#    for turno in turnos:
+#        apertura = time.fromisoformat(turno[0])
+#        cierre = time.fromisoformat(turno[1])
+#        if apertura <= cierre:
+#            if apertura <= ahora <= cierre: return True
+#        else: # Cruza medianoche
+#            if ahora >= apertura or ahora <= cierre: return True
+#    return False
+
+
+# --- HELPERS DE HORARIOS ---
+DIAS_SEMANA = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"]
+
+def esta_abierto(id_empresa):
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT horarios_json FROM empresas WHERE id_empresa = ?", (id_empresa,))
+    res = cursor.fetchone(); conn.close()
+    if not res or not res['horarios_json']: return True
+
+    horarios = json.loads(res['horarios_json'])
+    dia_actual = datetime.now().strftime('%w')
+    ahora = datetime.now().time()
+
+    if dia_actual in horarios and horarios[dia_actual].get('abierto'):
+        # Ahora recorremos la LISTA de turnos del día
+        for turno in horarios[dia_actual].get('turnos', []):
+            h_inicio = time.fromisoformat(turno['inicio'])
+            h_fin = time.fromisoformat(turno['fin'])
+            
+            if h_inicio <= h_fin:
+                if h_inicio <= ahora <= h_fin: return True
+            else: # Cruce de medianoche
+                if ahora >= h_inicio or ahora <= h_fin: return True
+    return False
+
+
+#def obtener_franjas_disponibles(id_empresa=None):
+#    if not id_empresa: return []
+#    
+#    intervalo = INTERVALO_FRANJAS_MINUTOS
+#    turnos = obtener_horarios_empresa(id_empresa)
+#    franjas = []
+#    ahora = datetime.now()
+#    hoy = ahora.date()
+#    margen_preparacion = ahora + timedelta(minutes=30)
+#
+#    conn = conectar_db(); cursor = conn.cursor()
+#
+#    for turno in turnos:
+#        apertura_dt = datetime.combine(hoy, time.fromisoformat(turno[0]))
+#        cierre_dt = datetime.combine(hoy, time.fromisoformat(turno[1]))
+#        
+#        # El cierre podría ser al día siguiente si cruza medianoche
+#        if cierre_dt <= apertura_dt:
+#            cierre_dt += timedelta(days=1)
+#
+#        actual = max(apertura_dt, margen_preparacion)
+#        # Redondear
+#        minutos_a_sumar = (intervalo - (actual.minute % intervalo)) % intervalo
+#        actual = (actual + timedelta(minutes=minutos_a_sumar)).replace(second=0, microsecond=0)
+
+#        while actual <= cierre_dt:
+#            hora_str = actual.strftime("%H:%M")
+#            fecha_hora_busqueda = f"{actual.strftime('%Y-%m-%d')} {hora_str}:00"
+#            
+#            cursor.execute("SELECT COUNT(*) FROM pedidos WHERE horario_entrega = ? AND id_empresa = ? AND estado_envio != 'Cancelado'", (fecha_hora_busqueda, id_empresa))
+#            if cursor.fetchone()[0] < MAX_PEDIDOS_POR_FRANJA_HORARIA:
+#                franjas.append(hora_str)
+#            actual += timedelta(minutes=intervalo)
+#    
+#    conn.close()
+#    return franjas
+
+def obtener_franjas_disponibles(id_empresa=None):
+    """Genera las horas de entrega disponibles detectando el formato de horario y múltiples turnos."""
+    if not id_empresa: return []
+    
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT horarios_json FROM empresas WHERE id_empresa = ?", (id_empresa,))
+    res = cursor.fetchone()
+    
+    if not res or not res['horarios_json']:
+        conn.close(); return []
 
     try:
-        inicio_hora, inicio_min = map(int, HORA_APERTURA.split(':'))
-        fin_hora, fin_min = map(int, HORA_CIERRE.split(':'))
-    except ValueError:
-        print("Error en formato de HORA_APERTURA o HORA_CIERRE en config.py")
-        return []
+        horarios_data = json.loads(res['horarios_json'])
+    except:
+        conn.close(); return []
+    #-----------------------------------------------------------------------------------------------------
+    #ahora = datetime.now()
+    ahora = get_now_arg() # <--- CAMBIAR ESTO
+    dia_actual_str = ahora.strftime('%w') # '0' a '6'
+    #----------------------------------------------------------------------------------------------------
+    # --- NORMALIZACIÓN DE TURNOS ---
+    # Creamos una lista unificada de turnos para procesar sin importar el formato de origen
+    turnos_a_procesar = []
 
-    inicio_turno_hoy = datetime.combine(hoy, datetime.min.time()).replace(hour=inicio_hora, minute=inicio_min)
-    fin_turno_hoy = datetime.combine(hoy, datetime.min.time()).replace(hour=fin_hora, minute=fin_min)
+    if isinstance(horarios_data, list):
+        # FORMATO ANTIGUO: [["08:00", "23:00"]]
+        for t in horarios_data:
+            turnos_a_procesar.append({'inicio': t[0], 'fin': t[1]})
+    else:
+        # FORMATO NUEVO: Diccionario {"0": {"abierto": True, "turnos": [...]}}
+        config_hoy = horarios_data.get(dia_actual_str)
+        if config_hoy and config_hoy.get('abierto'):
+            # Si tiene la lista de turnos (formato multi-turno)
+            if 'turnos' in config_hoy and config_hoy['turnos']:
+                turnos_a_procesar = config_hoy['turnos']
+            # Si es el formato nuevo pero simple (inicio y fin directos)
+            elif 'inicio' in config_hoy and 'fin' in config_hoy:
+                turnos_a_procesar = [{'inicio': config_hoy['inicio'], 'fin': config_hoy['fin']}]
 
-    hora_actual_dt = datetime.now()
+    if not turnos_a_procesar:
+        conn.close(); return []
 
-    current_time = hora_actual_dt + timedelta(minutes=(INTERVALO_FRANJAS_MINUTOS - hora_actual_dt.minute % INTERVALO_FRANJAS_MINUTOS) % INTERVALO_FRANJAS_MINUTOS)
-    current_time = current_time.replace(second=0, microsecond=0)
+    franjas = []
+    intervalo = INTERVALO_FRANJAS_MINUTOS
+    margen_preparacion = ahora + timedelta(minutes=30)
 
-    if current_time < inicio_turno_hoy:
-         current_time = inicio_turno_hoy
+    # Procesamos cada turno encontrado
+    for turno in turnos_a_procesar:
+        try:
+            h_inicio = time.fromisoformat(turno['inicio'])
+            h_fin = time.fromisoformat(turno['fin'])
+            #--------------------------------------------------------------------------
+            #inicio_dt = datetime.combine(ahora.date(), h_inicio)
+            # así que forzamos la localización:
+            inicio_dt = ARG_TZ.localize(datetime.combine(ahora.date(), h_inicio))
+            #--------------------------------------------------------------------------
+            fin_dt = datetime.combine(ahora.date(), h_fin)
 
-    franjas_ocupadas = _cargar_franjas_ocupadas_desde_db_interna(company_id_for_franjas)
+            # Manejo de cruce de medianoche
+            if fin_dt <= inicio_dt:
+                fin_dt += timedelta(days=1)
 
-    franjas_para_mostrar = []
-    while current_time <= fin_turno_hoy:
-        if current_time > hora_actual_dt:
-            pedidos_en_franja = franjas_ocupadas.get(current_time, 0)
-            if pedidos_en_franja < MAX_PEDIDOS_POR_FRANJA_HORARIA:
-                franjas_para_mostrar.append(current_time.strftime('%H:%M'))
-        current_time += timedelta(minutes=INTERVALO_FRANJAS_MINUTOS)
+            # Punto de partida: El máximo entre el inicio del turno y el ahora + margen
+            actual = max(inicio_dt, margen_preparacion)
+            
+            # Redondeo al siguiente intervalo
+            minutos_a_sumar = (intervalo - (actual.minute % intervalo)) % intervalo
+            actual = (actual + timedelta(minutes=minutos_a_sumar)).replace(second=0, microsecond=0)
 
-    return franjas_para_mostrar
-
-def _cargar_franjas_ocupadas_desde_db_interna(company_id):
-    """
-    Carga el conteo de pedidos por franja horaria para pedidos 'Pendiente'
-    desde la base de datos, considerando solo franjas futuras para el día actual y
-    filtrando por la empresa proporcionada.
-    Retorna un diccionario {datetime_obj: count}
-    """
-    franjas_ocupadas = {}
-    conn = conectar_db()
-    cursor = conn.cursor()
-
-    hoy_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-    query_conditions = ["estado_pago = 'Pendiente'", "horario_entrega >= ?"]
-    query_params = [hoy_str]
-
-    company_conditions, company_params = get_company_filter_conditions_and_params(table_alias='p')
-    query_conditions.extend(company_conditions)
-    query_params.extend(company_params)
-
-
-    final_query = f"""
-        SELECT horario_entrega, COUNT(*) AS num_pedidos
-        FROM pedidos p
-        WHERE {' AND '.join(query_conditions)}
-        GROUP BY horario_entrega
-    """
-    cursor.execute(final_query, query_params)
-
-    resultados = cursor.fetchall()
-    for row in resultados:
-        dt_obj = datetime.strptime(row['horario_entrega'], '%Y-%m-%d %H:%M:%S')
-        franjas_ocupadas[dt_obj] = row['num_pedidos']
-    conn.close()
-    return franjas_ocupadas
-
-def _obtener_pedido_completo_por_id(id_pedido):
-    """
-    Recupera un objeto Pedido completo (con sus ítems y datos de repartidor si aplica)
-    de la base de datos, aplicando filtro de empresa para usuarios no super_admin.
-    """
-    conn = conectar_db()
-    cursor = conn.cursor()
-
-    base_query = """
-        SELECT p.*, r.nombre AS repartidor_nombre, r.apellido AS repartidor_apellido, r.telefono AS repartidor_telefono
-        FROM pedidos p
-        LEFT JOIN repartidores r ON p.id_repartidor = r.id_repartidor
-    """
-    where_conditions = ["p.id_pedido = ?"]
-    query_params = [id_pedido]
-
-    company_conditions, company_params = get_company_filter_conditions_and_params(table_alias='p')
-    where_conditions.extend(company_conditions)
-    query_params.extend(company_params)
+            while actual <= fin_dt:
+                hora_str = actual.strftime("%H:%M")
+                fecha_hora_db = actual.strftime("%Y-%m-%d %H:%M:%S")
+                
+                cursor.execute("""
+                    SELECT COUNT(*) FROM pedidos 
+                    WHERE horario_entrega = ? AND id_empresa = ? AND estado_envio != 'Cancelado'
+                """, (fecha_hora_db, id_empresa))
+                
+                if cursor.fetchone()[0] < MAX_PEDIDOS_POR_FRANJA_HORARIA:
+                    # Evitar duplicados si los turnos se solapan
+                    if hora_str not in franjas:
+                        franjas.append(hora_str)
+                
+                actual += timedelta(minutes=intervalo)
+        except Exception as e:
+            print(f"Error procesando turno individual: {e}")
+            continue
     
-    final_query = base_query + " WHERE " + " AND ".join(where_conditions)
-
-    cursor.execute(final_query, query_params)
-    pedido_data = cursor.fetchone()
-
-    if not pedido_data:
-        conn.close()
-        return None
-
-    pedido = Pedido(
-        pedido_data['id_pedido'], pedido_data['cliente_nombre'], pedido_data['cliente_apellido'],
-        pedido_data['direccion_entrega'], pedido_data['es_envio'], pedido_data['horario_entrega'],
-        pedido_data['costo_envio'], pedido_data['costo_total'], pedido_data['forma_pago'],
-        pedido_data['estado_pago'], pedido_data['fecha_creacion'],
-        pedido_data['lat_cliente'], pedido_data['lon_cliente'],
-        pedido_data['fecha_pago'], pedido_data['id_repartidor'], pedido_data['id_empresa']
-    )
-
-    if pedido_data['id_repartidor']:
-        pedido.repartidor = Repartidor(
-            pedido_data['id_repartidor'],
-            pedido_data['repartidor_nombre'],
-            pedido_data['repartidor_apellido'],
-            pedido_data['repartidor_telefono']
-        )
-
-    cursor.execute("""
-        SELECT ip.cantidad, ip.precio_unitario, p.id_plato, p.nombre, p.descripcion, p.rubro
-        FROM items_pedido ip
-        JOIN platos p ON ip.id_plato = p.id_plato
-        WHERE ip.id_pedido = ?
-    """, (id_pedido,))
-
-    items_data = cursor.fetchall()
-    for item_row in items_data:
-        plato = Plato(item_row['id_plato'], item_row['nombre'], item_row['descripcion'], item_row['precio_unitario'], id_empresa=pedido.id_empresa, rubro=item_row['rubro'])
-        pedido.agregar_item(plato, item_row['cantidad'], item_row['precio_unitario'])
-
     conn.close()
-    return pedido
+    # Ordenar las franjas por si los turnos estaban desordenados
+    franjas.sort()
+    return franjas
 
-def init_app():
-    """
-    Función de inicialización que se ejecuta al inicio de la aplicación.
-    Crea tablas si no existen, añade platos de ejemplo y carga la información del restaurante.
-    """
-    print("Inicializando la aplicación...")
-    crear_tablas()
-    _agregar_super_admin_inicial()
-    _agregar_platos_ejemplo_a_db()
-    _agregar_repartidor_ejemplo_a_db()
-    obtener_info_restaurante_google_maps_cached("La Esquina del Sabor")
 
-    if cargar_configuracion('ENVIO_COSTO', id_empresa=None) is None:
-        guardar_configuracion('ENVIO_COSTO', DEFAULT_ENVIO_COSTO, id_empresa=None)
-        print(f"Costo de envío inicial '{DEFAULT_ENVIO_COSTO}' guardado como configuración global.")
+def verificar_acceso_empresa(id_empresa_recurso):
+    """Bloquea el acceso si la empresa del recurso no coincide con la del usuario."""
+    if not current_user.is_authenticated:
+        abort(401) # No logueado
+    
+    if current_user.has_role('super_admin', 'admin_empresa'):
+        return True # El super_admin siempre pasa
+    
+    # Convertimos ambos a entero para evitar el error de comparacion "2" == 2
+    try:
+        user_emp = int(current_user.id_empresa)
+        resource_emp = int(id_empresa_recurso)
+    except (ValueError, TypeError):
+        # Si alguno es None o no es número, bloqueamos y mandamos info a la terminal
+        print(f"BLOQUEO 403: Usuario Empresa({current_user.id_empresa}) vs Recurso Empresa({id_empresa_recurso})")
+        abort(403)
+    
+    if user_emp != resource_emp:
+        print(f"BLOQUEO 403: No coinciden IDs ({user_emp} != {resource_emp})")
+        abort(403)
+    
+    return True
 
-    if cargar_configuracion('PAGO_REPARTIDOR_POR_ENVIO', id_empresa=None) is None:
-        guardar_configuracion('PAGO_REPARTIDOR_POR_ENVIO', DEFAULT_PAGO_REPARTIDOR_POR_ENVIO, id_empresa=None)
-        print(f"Costo de pago a repartidor inicial '{DEFAULT_PAGO_REPARTIDOR_POR_ENVIO}' guardado como configuración global.")
 
-    print("Aplicación inicializada.")
 
-# --- Rutas de la Aplicación (Views) ---
 
+def get_company_id_for_frontend_context():
+    # 1. Si el cliente eligió una sucursal en el Index, usamos esa
+    if 'empresa_seleccionada_id' in session:
+        return session['empresa_seleccionada_id']
+    
+    # 2. Si es un empleado logueado, usamos la suya
+    if current_user.is_authenticated and not current_user.has_role('super_admin') and current_user.id_empresa:
+        return current_user.id_empresa
+        
+    # 3. Si no, la de por defecto
+    return DEFAULT_COMPANY_FOR_ORDERS
+
+def guardar_configuracion(clave, valor, id_empresa=None):
+    conn = conectar_db(); cursor = conn.cursor()
+    if id_empresa: cursor.execute("REPLACE INTO configuracion (clave, valor, id_empresa) VALUES (?, ?, ?)", (clave, str(valor), id_empresa))
+    else: cursor.execute("REPLACE INTO configuracion (clave, valor, id_empresa) VALUES (?, ?, NULL)", (clave, str(valor)))
+    conn.commit(); conn.close()
+
+def cargar_configuracion(clave, valor_defecto=None, id_empresa=None):
+    conn = conectar_db(); cursor = conn.cursor()
+    if id_empresa: cursor.execute("SELECT valor FROM configuracion WHERE clave = ? AND id_empresa = ?", (clave, id_empresa))
+    else: cursor.execute("SELECT valor FROM configuracion WHERE clave = ? AND id_empresa IS NULL", (clave,))
+    res = cursor.fetchone(); conn.close()
+    return res['valor'] if res else valor_defecto
+
+def get_costo_envio(id_empresa=None):
+    # Si no nos pasan empresa, intentamos sacar la del usuario logueado
+    if id_empresa is None:
+        id_empresa = current_user.id_empresa if (current_user.is_authenticated and current_user.id_empresa) else DEFAULT_COMPANY_FOR_ORDERS
+    
+    costo = cargar_configuracion('ENVIO_COSTO', str(DEFAULT_ENVIO_COSTO), id_empresa)
+    return float(costo)
+
+def procesar_descuento_stock(id_pedido):
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Obtener todos los items del pedido
+    cursor.execute("SELECT id, id_plato, cantidad FROM items_pedido WHERE id_pedido = ?", (id_pedido,))
+    items = cursor.fetchall()
+    
+    for item in items:
+        # A. Descontar por la RECETA BASE del plato
+        cursor.execute("""
+            SELECT id_insumo, cantidad_requerida 
+            FROM recetas WHERE id_plato = ?
+        """, (item['id_plato'],))
+        
+        insumos_base = cursor.fetchall()
+        for ins in insumos_base:
+            total_a_descontar = ins['cantidad_requerida'] * item['cantidad']
+            cursor.execute("""
+                UPDATE insumos SET stock_actual = stock_actual - ? 
+                WHERE id_insumo = ?
+            """, (total_a_descontar, ins['id_insumo']))
+
+        # B. Descontar por MODIFICADORES (Ej: Opciones elegidas)
+        # Buscamos qué opciones eligió el cliente para este item
+        cursor.execute("""
+            SELECT ipm.nombre_opcion, po.id_opcion 
+            FROM items_pedido_modificadores ipm
+            JOIN plato_opciones po ON ipm.nombre_opcion = po.nombre
+            WHERE ipm.id_item_pedido = ?
+        """, (item['id'],))
+        
+        opciones_elegidas = cursor.fetchall()
+        for opt in opciones_elegidas:
+            cursor.execute("""
+                SELECT id_insumo, cantidad_requerida 
+                FROM opciones_insumos WHERE id_opcion = ?
+            """, (opt['id_opcion'],))
+            
+            insumos_opt = cursor.fetchall()
+            for ins_o in insumos_opt:
+                total_o = ins_o['cantidad_requerida'] * item['cantidad']
+                cursor.execute("""
+                    UPDATE insumos SET stock_actual = stock_actual - ? 
+                    WHERE id_insumo = ?
+                """, (total_o, ins_o['id_insumo']))
+                
+    conn.commit(); conn.close()
+
+
+def procesar_descuento_stock(id_pedido):
+    """Busca los platos del pedido y descuenta sus ingredientes del inventario"""
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # Buscamos todos los productos de este pedido
+    cursor.execute("SELECT id, id_plato, cantidad FROM items_pedido WHERE id_pedido = ?", (id_pedido,))
+    items = cursor.fetchall()
+    
+    for item in items:
+        # A. DESCUENTO POR RECETA BASE
+        # Buscamos qué insumos gasta este plato según la tabla recetas
+        cursor.execute("""
+            SELECT id_insumo, cantidad_requerida 
+            FROM recetas WHERE id_plato = ?
+        """, (item['id_plato'],))
+        
+        insumos_base = cursor.fetchall()
+        for ins in insumos_base:
+            total_a_descontar = ins['cantidad_requerida'] * item['cantidad']
+            cursor.execute("""
+                UPDATE insumos SET stock_actual = stock_actual - ? 
+                WHERE id_insumo = ?
+            """, (total_a_descontar, ins['id_insumo']))
+
+        # B. DESCUENTO POR MODIFICADORES (Ej: Extra Bacon, Doble Carne)
+        # Buscamos los modificadores que el cliente eligió para este item
+        cursor.execute("""
+            SELECT po.id_opcion 
+            FROM items_pedido_modificadores ipm
+            JOIN plato_opciones po ON ipm.nombre_opcion = po.nombre
+            WHERE ipm.id_item_pedido = ?
+        """, (item['id'],))
+        
+        opciones_elegidas = cursor.fetchall()
+        for opt in opciones_elegidas:
+            cursor.execute("""
+                SELECT id_insumo, cantidad_requerida 
+                FROM opciones_insumos WHERE id_opcion = ?
+            """, (opt['id_opcion'],))
+            
+            insumos_opt = cursor.fetchall()
+            for ins_o in insumos_opt:
+                total_o = ins_o['cantidad_requerida'] * item['cantidad']
+                cursor.execute("""
+                    UPDATE insumos SET stock_actual = stock_actual - ? 
+                    WHERE id_insumo = ?
+                """, (total_o, ins_o['id_insumo']))
+                
+    conn.commit(); conn.close()
+
+
+
+
+# --- Rutas ---
 @app.route('/')
 def index():
-    """Página principal, muestra información del restaurante."""
-    info = obtener_info_restaurante_google_maps_cached("La Esquina del Sabor")
-    return render_template('index.html', info=info)
+    conn = conectar_db()
+    cursor = conn.cursor()
+    # Traemos todas las empresas que estén activas
+    cursor.execute("SELECT * FROM empresas WHERE activo = 1")
+    todas_las_empresas = cursor.fetchall()
+    conn.close()
+    
+    return render_template('index.html', empresas=todas_las_empresas)
 
-# --- Rutas de Autenticación ---
+
+#Repartidor App
+@app.route('/repartidor/mis-pedidos')
+@login_required
+def panel_repartidor():
+    # --- DEBUG: Esto aparecerá en tu terminal negra de VS Code/CMD ---
+    print(f"DEBUG: Usuario: {current_user.email}")
+    print(f"DEBUG: Rol en el objeto: '{current_user.nombre_rol}'")
+    print(f"DEBUG: ID Repartidor Vinculado: {current_user.id_repartidor_vinculado}")
+    # ----------------------------------------------------------------
+
+    # CAMBIO DE SEGURIDAD: Identificamos el rol en minúsculas
+    rol_actual = str(current_user.nombre_rol).lower()
+    
+    # Verificamos si tiene permiso para entrar al panel
+    if "repartidor" not in rol_actual and "admin" not in rol_actual and "empleado" not in rol_actual:
+        print("DEBUG: ACCESO DENEGADO POR ROL INCORRECTO")
+        abort(403)
+
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # --- LÓGICA DE FILTRADO INTELIGENTE ---
+
+    # 1. CASO REPARTIDOR: Solo ve sus pedidos asignados
+    if "repartidor" in rol_actual:
+        if not current_user.id_repartidor_vinculado:
+            conn.close()
+            flash("Acceso denegado: Tu usuario de repartidor no tiene un repartidor físico vinculado.", "danger")
+            return redirect(url_for('index'))
+            
+        cursor.execute("""
+            SELECT p.id_pedido, p.cliente_nombre, p.cliente_apellido, p.direccion_entrega, 
+                   p.estado_envio, p.lat_cliente, p.lon_cliente, p.telefono_cliente, 
+                   p.fecha_creacion, p.token, p.eta_minutos
+            FROM pedidos p 
+            WHERE p.id_repartidor = ? 
+            AND p.estado_envio NOT IN ('Entregado', 'Cancelado')
+            ORDER BY p.horario_entrega ASC
+        """, (current_user.id_repartidor_vinculado,))
+
+    # 2. CASO SUPER ADMIN: Ve toda la flota de todas las sucursales
+    elif "super_admin" in rol_actual:
+        cursor.execute("""
+            SELECT p.id_pedido, p.cliente_nombre, p.cliente_apellido, p.direccion_entrega, 
+                   p.estado_envio, p.lat_cliente, p.lon_cliente, p.telefono_cliente, 
+                   p.fecha_creacion, p.token, p.eta_minutos,
+                   r.nombre as rep_n, r.apellido as rep_a
+            FROM pedidos p 
+            LEFT JOIN repartidores r ON p.id_repartidor = r.id_repartidor
+            WHERE p.estado_envio NOT IN ('Entregado', 'Cancelado')
+            AND p.es_envio = 1
+            ORDER BY p.horario_entrega ASC
+        """)
+
+    # 3. CASO ADMIN/EMPLEADO DE EMPRESA: Ve todos los envíos de SU sucursal
+    else:
+        cursor.execute("""
+            SELECT p.id_pedido, p.cliente_nombre, p.cliente_apellido, p.direccion_entrega, 
+                   p.estado_envio, p.lat_cliente, p.lon_cliente, p.telefono_cliente, 
+                   p.fecha_creacion, p.token, p.eta_minutos,
+                   r.nombre as rep_n, r.apellido as rep_a
+            FROM pedidos p 
+            LEFT JOIN repartidores r ON p.id_repartidor = r.id_repartidor
+            WHERE p.id_empresa = ? 
+            AND p.es_envio = 1
+            AND p.estado_envio NOT IN ('Entregado', 'Cancelado')
+            ORDER BY p.horario_entrega ASC
+        """, (current_user.id_empresa,))
+    
+    pedidos = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    
+    return render_template('repartidor_panel.html', pedidos=pedidos)
+
+
+
+import urllib.parse # Asegúrate de tener este import arriba
+
+@app.route('/repartidor/pedido/<int:id_pedido>/despachar', methods=['POST'])
+@login_required
+def repartidor_despachar(id_pedido):
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Obtener datos necesarios
+    cursor.execute("""
+        SELECT p.lat_cliente, p.lon_cliente, e.lat, e.lon 
+        FROM pedidos p 
+        JOIN empresas e ON p.id_empresa = e.id_empresa 
+        WHERE p.id_pedido = ?
+    """, (id_pedido,))
+    data = cursor.fetchone()
+    
+    # 2. Calcular ETA Real (OSRM)
+    eta = calcular_tiempo_ruta_osrm(data['lat'], data['lon'], data['lat_cliente'], data['lon_cliente'])
+    
+    # 3. Actualizar estado a 'En Camino' y guardar el ETA
+    ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute("""
+        UPDATE pedidos 
+        SET estado_envio = 'En Camino', 
+            fecha_despacho = ?, 
+            eta_minutos = ? 
+        WHERE id_pedido = ?
+    """, (ahora, eta, id_pedido))
+    
+    conn.commit(); conn.close()
+    flash(f"Pedido #{id_pedido} marcado EN CAMINO. Puedes notificar al cliente ahora.", "info")
+    return redirect(url_for('panel_repartidor'))
+
+
+
+# NUEVA RUTA: Para seleccionar la empresa y guardarla en la sesión
+@app.route('/seleccionar_sucursal/<int:id_empresa>')
+def seleccionar_sucursal(id_empresa):
+    session['empresa_seleccionada_id'] = id_empresa
+    return redirect(url_for('hacer_pedido'))
+
+
+
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('index'))
-
     if request.method == 'POST':
-        email = request.form['email'].strip()
-        password = request.form['password'].strip()
-
-        conn = conectar_db()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT u.id_usuario, u.email, u.password, u.nombre, u.apellido,
-                   u.id_rol, u.id_empresa, u.activo, u.primer_login_requerido,
-                   r.nombre_rol
-            FROM usuarios u
-            JOIN roles r ON u.id_rol = r.id_rol
-            WHERE u.email = ?
-        """, (email,))
-        user_data = cursor.fetchone()
-        conn.close()
-
-        if user_data:
-            user = Usuario(
-                user_data['id_usuario'],
-                user_data['email'],
-                user_data['password'],
-                user_data['nombre'],
-                user_data['apellido'],
-                user_data['id_rol'],
-                user_data['id_empresa'],
-                user_data['activo'],
-                user_data['primer_login_requerido'],
-                user_data['nombre_rol']
-            )
-            if check_password_hash(user.password, password) and user.is_active():
-                login_user(user)
-                flash(f"Bienvenido, {user.nombre}!", "success")
-
-                if user.primer_login_requerido:
-                    return redirect(url_for('cambiar_clave_inicial'))
-
-                next_page = request.args.get('next')
-                return redirect(next_page or url_for('index'))
-            else:
-                flash("Credenciales inválidas o usuario inactivo.", "danger")
-        else:
-            flash("Credenciales inválidas o usuario no encontrado.", "danger")
-
+        email, password = request.form.get('email'), request.form.get('password')
+        conn = conectar_db(); cursor = conn.cursor()
+        cursor.execute("SELECT u.*, r.nombre_rol FROM usuarios u JOIN roles r ON u.id_rol = r.id_rol WHERE u.email = ?", (email,))
+        u = cursor.fetchone(); conn.close()
+        if u and check_password_hash(u['password'], password):
+            user = Usuario(u['id_usuario'], u['email'], u['password'], u['nombre'], u['apellido'], u['id_rol'], u['id_empresa'], u['activo'], u['primer_login_requerido'], u['nombre_rol'])
+            login_user(user); return redirect(url_for('index'))
+        
+            # --- REDIRECCIÓN INTELIGENTE ---
+            if user.has_role('repartidor'):
+                return redirect(url_for('panel_repartidor'))
+            
+            return redirect(url_for('index'))    
+            
+        
     return render_template('login.html')
 
 @app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    flash("Has cerrado sesión.", "info")
-    return redirect(url_for('index'))
+def logout(): logout_user(); return redirect(url_for('index'))
 
-@app.route('/cambiar_clave_inicial', methods=['GET', 'POST'])
-@login_required
-def cambiar_clave_inicial():
-    if not current_user.primer_login_requerido:
-        flash("Tu contraseña ya ha sido cambiada o no se requiere cambio inicial.", "info")
-        return redirect(url_for('index'))
+import secrets # <--- ASEGÚRATE DE TENER ESTA LÍNEA AL INICIO DE APP.PY
 
-    if request.method == 'POST':
-        nueva_clave = request.form['nueva_clave']
-        confirmar_clave = request.form['confirmar_clave']
+def calcular_totales_carrito(id_empresa):
+    carrito = session.get('carrito', {})
+    # Usamos precio_total_unitario que es el que tiene los extras sumados
+    subtotal = sum(item['precio_total_unitario'] * item['cantidad'] for item in carrito.values())
+    
+    costo_envio = get_costo_envio(id_empresa)
+    return {
+        "subtotal": subtotal,
+        "envio": costo_envio,
+        "total_con_envio": subtotal + costo_envio
+    }
 
-        if not nueva_clave or len(nueva_clave) < 6:
-            flash("La nueva contraseña debe tener al menos 6 caracteres.", "danger")
-        elif nueva_clave != confirmar_clave:
-            flash("Las contraseñas no coinciden.", "danger")
-        else:
-            conn = conectar_db()
-            cursor = conn.cursor()
-            try:
-                hashed_password = generate_password_hash(nueva_clave, method='pbkdf2:sha256')
-                cursor.execute("""
-                    UPDATE usuarios SET password = ?, primer_login_requerido = 0
-                    WHERE id_usuario = ?
-                """, (hashed_password, current_user.id))
-                conn.commit()
-                current_user.password = hashed_password
-                current_user.primer_login_requerido = 0
 
-                flash("Tu contraseña ha sido actualizada con éxito. Ya puedes acceder a la aplicación.", "success")
-                return redirect(url_for('index'))
-            except sqlite3.Error as e:
-                conn.rollback()
-                flash(f"Error al actualizar la contraseña: {e}", "danger")
-            finally:
-                conn.close()
+@app.route('/api/validar_cupon', methods=['POST'])
+def validar_cupon():
+    data = request.json
+    codigo = data.get('codigo', '').strip().upper()
+    total_carrito = float(data.get('total', 0))
+    telefono = data.get('telefono', '').strip() # <--- Recibimos el teléfono
+    cid = get_company_id_for_frontend_context()
 
-    return render_template('cambiar_clave_inicial.html')
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Buscar si el cupón existe
+    cursor.execute("SELECT * FROM cupones WHERE codigo = ? AND id_empresa = ? AND activo = 1", (codigo, cid))
+    cup = cursor.fetchone()
 
-@app.route('/hacer_pedido', methods=['GET', 'POST'])
-def hacer_pedido():
-    """
-    Ruta para que el cliente realice un nuevo pedido.
-    GET: Muestra el formulario con la carta y el carrito (unificado).
-    POST: Procesa el formulario, guarda el pedido en la DB y redirige a la confirmación.
-    """
-    company_id_for_frontend = get_company_id_for_frontend_context()
+    if not cup:
+        conn.close()
+        return jsonify({"success": False, "message": "Cupón no válido."})
 
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id_plato, nombre, descripcion, precio, rubro FROM platos WHERE activo = 1 AND id_empresa = ? ORDER BY id_plato ASC",
-                   (company_id_for_frontend,))
-    platos_db = cursor.fetchall()
+    # 2. NUEVO: Verificar si este teléfono ya usó este código antes
+    if telefono:
+        cursor.execute("""
+            SELECT COUNT(*) FROM pedidos 
+            WHERE telefono_cliente = ? AND cupon_codigo = ? AND estado_envio != 'Cancelado'
+        """, (telefono, codigo))
+        
+        if cursor.fetchone()[0] > 0:
+            conn.close()
+            return jsonify({"success": False, "message": "Ya utilizaste esta promoción anteriormente."})
+
+    # 3. Validar mínimo de compra
+    if total_carrito < cup['minimo_compra']:
+        conn.close()
+        return jsonify({"success": False, "message": f"Mínimo para este cupón: ${cup['minimo_compra']}"})
+
+    # Calcular descuento
+    descuento = total_carrito * (cup['valor'] / 100) if cup['tipo'] == 'porcentaje' else cup['valor']
+
+    session['cupon_aplicado'] = {'codigo': codigo, 'descuento': descuento}
     conn.close()
+    return jsonify({"success": True, "descuento": descuento, "message": "¡Cupón aplicado!"})
+
+
+
+@app.route('/gestion/cupones')
+@login_required
+def gestion_cupones():
+    # Solo administradores y super_admin
+    if not current_user.has_role('super_admin') and not current_user.has_role('admin_empresa'):
+        abort(403)
+        
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # Filtro por empresa
+    if current_user.has_role('super_admin'):
+        cursor.execute("SELECT c.*, e.nombre as empresa_n FROM cupones c LEFT JOIN empresas e ON c.id_empresa = e.id_empresa")
+    else:
+        cursor.execute("SELECT * FROM cupones WHERE id_empresa = ?", (current_user.id_empresa,))
+    
+    cupones = cursor.fetchall()
+    conn.close()
+    return render_template('gestion_cupones.html', cupones=cupones)
+
+@app.route('/gestion/cupones/agregar', methods=['GET', 'POST'])
+@login_required
+def agregar_cupon():
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
 
     if request.method == 'POST':
-        cliente_nombre = request.form['nombre'].strip()
-        cliente_apellido = request.form['apellido'].strip()
-        direccion_entrega = request.form['direccion'].strip()
-        forma_pago = request.form['forma_pago']
-        horario_str = request.form['horario_entrega']
-        es_envio_solicitado = 'es_envio_solicitado' in request.form
+        codigo = request.form.get('codigo').strip().upper()
+        tipo = request.form.get('tipo')
+        valor = float(request.form.get('valor'))
+        minimo = float(request.form.get('minimo_compra', 0))
+        
+        # Determinar empresa
+        id_empresa = request.form.get('id_empresa') if current_user.has_role('super_admin') else current_user.id_empresa
 
-        pedido_id_empresa = company_id_for_frontend
-
-        form_data_on_error = request.form.to_dict()
-        form_data_on_error['es_envio_solicitado'] = es_envio_solicitado
-
-        if not all([cliente_nombre, cliente_apellido, forma_pago, horario_str]):
-            flash("Todos los campos obligatorios (nombre, apellido, forma de pago, horario de entrega) deben ser completados.", "danger")
-            return render_template('hacer_pedido.html',
-                                   platos=platos_db,
-                                   franjas_horarias=_generar_franjas_horarias_disponibles(company_id_for_frontend),
-                                   carrito_detalle=_get_carrito_detalle(platos_db),
-                                   total_carrito=_get_total_carrito(),
-                                   costo_envio=get_costo_envio(),
-                                   request_form=form_data_on_error,
-                                   carrito=session.get('carrito', {}))
-
-        if es_envio_solicitado and not direccion_entrega:
-            flash("Si desea envío a domicilio, la dirección de entrega es obligatoria.", "danger")
-            return render_template('hacer_pedido.html',
-                                   platos=platos_db,
-                                   franjas_horarias=_generar_franjas_horarias_disponibles(company_id_for_frontend),
-                                   carrito_detalle=_get_carrito_detalle(platos_db),
-                                   total_carrito=_get_total_carrito(),
-                                   costo_envio=get_costo_envio(),
-                                   request_form=form_data_on_error,
-                                   carrito=session.get('carrito', {}))
-
+        conn = conectar_db(); cursor = conn.cursor()
         try:
-            horario_entrega_dt = datetime.strptime(horario_str, '%H:%M')
-            hoy = datetime.now().date()
-            horario_entrega_completo = datetime.combine(hoy, horario_entrega_dt.time())
-
-            franjas_ocupadas = _cargar_franjas_ocupadas_desde_db_interna(company_id_for_frontend)
-            if franjas_ocupadas.get(horario_entrega_completo, 0) >= MAX_PEDIDOS_POR_FRANJA_HORARIA:
-                flash(f"Lo sentimos, el horario {horario_str} se ha completado. Por favor, elija otra franja.", "danger")
-                return render_template('hacer_pedido.html',
-                                       platos=platos_db,
-                                       franjas_horarias=_generar_franjas_horarias_disponibles(company_id_for_frontend),
-                                       carrito_detalle=_get_carrito_detalle(platos_db),
-                                       total_carrito=_get_total_carrito(),
-                                       costo_envio=get_costo_envio(),
-                                       request_form=form_data_on_error,
-                                       carrito=session.get('carrito', {}))
-
-        except ValueError:
-            flash("Horario de entrega inválido.", "danger")
-            return render_template('hacer_pedido.html',
-                                   platos=platos_db,
-                                   franjas_horarias=_generar_franjas_horarias_disponibles(company_id_for_frontend),
-                                   carrito_detalle=_get_carrito_detalle(platos_db),
-                                   total_carrito=_get_total_carrito(),
-                                   costo_envio=get_costo_envio(),
-                                   request_form=form_data_on_error,
-                                   carrito=session.get('carrito', {}))
-
-        es_envio = False
-        costo_envio_aplicado = 0.0
-        lat_cliente, lon_cliente = None, None
-
-        current_envio_costo = get_costo_envio()
-
-        if es_envio_solicitado:
-            cliente_lat_lon = obtener_coordenadas_desde_direccion(direccion_entrega)
-            if cliente_lat_lon:
-                lat_cliente, lon_cliente = cliente_lat_lon
-                distancia_cuadras = calcular_distancia_cuadras(SUCURSAL_LAT, SUCURSAL_LON, lat_cliente, lon_cliente)
-                if distancia_cuadras <= RADIO_ENVIO_CUADRAS:
-                    es_envio = True
-                    costo_envio_aplicado = current_envio_costo
-                    flash(f"Su dirección está dentro del rango de envío ({distancia_cuadras:.2f} cuadras). Costo de envío aplicado.", "info")
-                else:
-                    flash(f"Su dirección ({distancia_cuadras:.2f} cuadras) está fuera del rango de envío. El pedido será para retiro en sucursal y no se aplicará costo de envío.", "warning")
-            else:
-                flash("No se pudo validar su dirección para el envío. El pedido será para retiro en sucursal y no se aplicará costo de envío.", "warning")
-        else:
-            flash("El pedido será para retiro en sucursal.", "info")
-
-        if 'carrito' not in session or not session['carrito']:
-            flash("El carrito está vacío. Agregue productos antes de hacer el pedido.", "danger")
-            return render_template('hacer_pedido.html',
-                                   platos=platos_db,
-                                   franjas_horarias=_generar_franjas_horarias_disponibles(company_id_for_frontend),
-                                   carrito_detalle=_get_carrito_detalle(platos_db),
-                                   total_carrito=_get_total_carrito(),
-                                   costo_envio=get_costo_envio(),
-                                   request_form=form_data_on_error,
-                                   carrito=session.get('carrito', {}))
-
-        items_pedido_para_db = []
-        costo_total_pedido = costo_envio_aplicado
-        for item_id, item_data in session['carrito'].items():
-            plato = next((p for p in platos_db if str(p['id_plato']) == item_id), None)
-            if plato:
-                cantidad = item_data['cantidad']
-                precio_unitario = plato['precio']
-                items_pedido_para_db.append({"plato_id": plato['id_plato'], "cantidad": cantidad, "precio_unitario": precio_unitario})
-                costo_total_pedido += (cantidad * precio_unitario)
-            else:
-                flash(f"Producto con ID {item_id} no encontrado en el catálogo. Por favor, revise su carrito.", "danger")
-                session.pop('carrito', None)
-                return redirect(url_for('hacer_pedido'))
-
-        conn = conectar_db()
-        cursor = conn.cursor()
-        try:
-            fecha_creacion_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            horario_entrega_iso = horario_entrega_completo.strftime('%Y-%m-%d %H:%M:%S')
-
             cursor.execute("""
-                INSERT INTO pedidos (
-                    cliente_nombre, cliente_apellido, direccion_entrega, es_envio,
-                    horario_entrega, costo_envio, costo_total, forma_pago, estado_pago,
-                    fecha_creacion, lat_cliente, lon_cliente, id_repartidor, id_empresa
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                cliente_nombre, cliente_apellido, direccion_entrega, int(es_envio),
-                horario_entrega_iso, costo_envio_aplicado,
-                costo_total_pedido, forma_pago, "Pendiente",
-                fecha_creacion_str, lat_cliente, lon_cliente,
-                None, pedido_id_empresa
-            ))
-            id_nuevo_pedido = cursor.lastrowid
-
-            for item in items_pedido_para_db:
-                cursor.execute("""
-                    INSERT INTO items_pedido (id_pedido, id_plato, cantidad, precio_unitario)
-                    VALUES (?, ?, ?, ?)
-                """, (id_nuevo_pedido, item["plato_id"], item["cantidad"], item["precio_unitario"]))
-
+                INSERT INTO cupones (codigo, tipo, valor, minimo_compra, activo, id_empresa) 
+                VALUES (?, ?, ?, ?, 1, ?)
+            """, (codigo, tipo, valor, minimo, id_empresa))
             conn.commit()
-            flash(f"Pedido #{id_nuevo_pedido} realizado con éxito!", "success")
-            session.pop('carrito', None)
-            return redirect(url_for('pedido_confirmacion', id_pedido=id_nuevo_pedido))
-
-        except sqlite3.Error as e:
-            conn.rollback()
-            flash(f"Error al guardar el pedido: {e}", "danger")
-            return render_template('hacer_pedido.html',
-                                   platos=platos_db,
-                                   franjas_horarias=_generar_franjas_horarias_disponibles(company_id_for_frontend),
-                                   carrito_detalle=_get_carrito_detalle(platos_db),
-                                   total_carrito=_get_total_carrito(),
-                                   costo_envio=get_costo_envio(),
-                                   request_form=form_data_on_error,
-                                   carrito=session.get('carrito', {}))
+            flash(f"Cupón '{codigo}' creado con éxito.", "success")
+            return redirect(url_for('gestion_cupones'))
+        except Exception as e:
+            flash(f"Error al crear el cupón: {e}", "danger")
         finally:
             conn.close()
 
-    franjas_horarias = _generar_franjas_horarias_disponibles(company_id_for_frontend)
+    empresas = []
+    if current_user.has_role('super_admin'):
+        conn = conectar_db(); cursor = conn.cursor()
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas = cursor.fetchall(); conn.close()
 
-    return render_template('hacer_pedido.html',
-                           platos=platos_db,
-                           franjas_horarias=franjas_horarias,
-                           carrito_detalle=_get_carrito_detalle(platos_db),
-                           total_carrito=_get_total_carrito(),
-                           costo_envio=get_costo_envio(),
-                           request_form={},
-                           carrito=session.get('carrito', {}))
+    return render_template('agregar_cupon.html', empresas=empresas)
 
 
-# --- FUNCIONES AUXILIARES PARA EL CARRO (PARA RECARGAS CON ERRORES) ---
-def _get_carrito_detalle(platos_db):
+
+# --- RUTA PARA INACTIVAR / ACTIVAR CUPÓN ---
+@app.route('/gestion/cupones/toggle/<int:id_cupon>', methods=['POST'])
+@login_required
+def toggle_cupon(id_cupon):
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
+        
+    conn = conectar_db(); cursor = conn.cursor()
+    # Obtenemos el estado actual
+    cursor.execute("SELECT activo FROM cupones WHERE id_cupon = ?", (id_cupon,))
+    res = cursor.fetchone()
+    
+    if res:
+        nuevo_estado = 0 if res['activo'] == 1 else 1
+        # Actualizamos
+        cursor.execute("UPDATE cupones SET activo = ? WHERE id_cupon = ?", (nuevo_estado, id_cupon))
+        conn.commit()
+        estado_txt = "activado" if nuevo_estado == 1 else "inactivado"
+        flash(f"Cupón {estado_txt} correctamente.", "info")
+    
+    conn.close()
+    return redirect(url_for('gestion_cupones'))
+
+# --- RUTA PARA EDITAR CUPÓN ---
+@app.route('/gestion/cupones/editar/<int:id_cupon>', methods=['GET', 'POST'])
+@login_required
+def editar_cupon(id_cupon):
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
+
+    conn = conectar_db(); cursor = conn.cursor()
+
+    if request.method == 'POST':
+        codigo = request.form.get('codigo').strip().upper()
+        tipo = request.form.get('tipo')
+        valor = float(request.form.get('valor'))
+        minimo = float(request.form.get('minimo_compra', 0))
+        
+        cursor.execute("""
+            UPDATE cupones 
+            SET codigo=?, tipo=?, valor=?, minimo_compra=? 
+            WHERE id_cupon=?
+        """, (codigo, tipo, valor, minimo, id_cupon))
+        conn.commit(); conn.close()
+        flash("Cupón actualizado con éxito.", "success")
+        return redirect(url_for('gestion_cupones'))
+
+    cursor.execute("SELECT * FROM cupones WHERE id_cupon = ?", (id_cupon,))
+    cupon = cursor.fetchone(); conn.close()
+    
+    if not cupon: abort(404)
+    return render_template('editar_cupon.html', cupon=cupon)
+
+
+#envio de cupones masivos
+
+@app.route('/gestion/cupones/difusion')
+@login_required
+def difusion_cupones():
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
+        
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Obtener solo los cupones ACTIVOS de la empresa
+    cid = current_user.id_empresa
+    cursor.execute("SELECT * FROM cupones WHERE id_empresa = ? AND activo = 1", (cid,))
+    cupones_activos = cursor.fetchall()
+    
+    # 2. Obtener lista de clientes (CRM)
+    cursor.execute("SELECT nombre, apellido, telefono FROM clientes WHERE id_empresa = ?", (cid,))
+    clientes_db = cursor.fetchall()
+
+    # --- MEJORA DE COMPATIBILIDAD (Punto 1: Limpieza y Formato 549) ---
+    clientes_procesados = []
+    for cli in clientes_db:
+        # Extraemos solo los números del teléfono guardado
+        tel_solo_numeros = "".join(filter(str.isdigit, str(cli['telefono'])))
+        
+        # Lógica para que WhatsApp reconozca el número aunque no esté agendado
+        # Si tiene 10 dígitos (ej: 1122334455), agregamos 549
+        if len(tel_solo_numeros) == 10:
+            tel_wa = "549" + tel_solo_numeros
+        # Si ya tiene el 54 pero le falta el 9 (ej: 5411...), se lo inyectamos
+        elif tel_solo_numeros.startswith("54") and not tel_solo_numeros.startswith("549"):
+            tel_wa = "549" + tel_solo_numeros[2:]
+        else:
+            tel_wa = tel_solo_numeros
+
+        clientes_procesados.append({
+            'nombre': cli['nombre'],
+            'apellido': cli['apellido'],
+            'telefono_original': cli['telefono'],
+            'telefono_wa': tel_wa # Este se usará para el link de WhatsApp
+        })
+    # -----------------------------------------------------------------
+    
+    # 3. Construir el Mensaje Maestro (Tu código original preservado)
+    # Traemos el nombre real de la empresa para que el mensaje sea profesional
+    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (cid,))
+    emp_data = cursor.fetchone()
+    empresa_nombre = emp_data['nombre'] if emp_data else "Nuestra Sucursal"
+    
+    mensaje = f"🎉 *¡PROMOCIONES DE LA SEMANA EN {empresa_nombre.upper()}!* 🎉\n\n"
+    mensaje += "Aprovechá estos beneficios exclusivos para tus pedidos de esta semana:\n\n"
+    
+    for c in cupones_activos:
+        desc = f"{int(c['valor'])}%" if c['tipo'] == 'porcentaje' else f"${int(c['valor'])}"
+        mensaje += f"🏷️ *CÓDIGO: {c['codigo']}*\n"
+        mensaje += f"🎁 Beneficio: *{desc} de descuento*\n"
+        if c['minimo_compra'] > 0:
+            mensaje += f"💰 Mínimo de compra: ${int(c['minimo_compra'])}\n"
+        mensaje += "--------------------------\n"
+    
+    mensaje += "\n🚀 *Hacé tu pedido online aquí:* \n"
+    mensaje += url_for('hacer_pedido', _external=True)
+    mensaje += "\n\n_¡Te esperamos!_ 😋"
+    
+    conn.close()
+    
+    # Pasamos el mensaje ya codificado para URL
+    mensaje_url = urllib.parse.quote(mensaje)
+    
+    return render_template('cupones_difusion.html', 
+                           clientes=clientes_procesados, # Usamos la lista procesada
+                           mensaje_texto=mensaje, 
+                           mensaje_url=mensaje_url)
+    
+    
+
+@app.route('/gestion/clientes')
+@login_required
+def gestion_clientes():
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
+        
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # Consulta avanzada: Une clientes con sus pedidos para calcular totales
+    query = """
+        SELECT c.*, 
+               COUNT(p.id_pedido) as total_pedidos, 
+               SUM(p.costo_total) as gasto_total
+        FROM clientes c
+        LEFT JOIN pedidos p ON c.id_cliente = p.id_cliente
     """
-    Genera el detalle del carrito para la plantilla, útil para recargas con errores.
-    """
-    carrito_detalle = []
-    if 'carrito' in session and session['carrito']:
-        for item_id, item_data in session['carrito'].items():
-            plato = next((p for p in platos_db if str(p['id_plato']) == item_id), None)
-            if plato:
-                subtotal = plato['precio'] * item_data['cantidad']
-                carrito_detalle.append({
-                    'id_plato': plato['id_plato'],
-                    'nombre': plato['nombre'],
-                    'precio_unitario': plato['precio'],
-                    'cantidad': item_data['cantidad'],
-                    'subtotal': subtotal,
-                    'rubro': plato['rubro'] 
-                })
-    return carrito_detalle
+    
+    if current_user.has_role('super_admin'):
+        query += " GROUP BY c.id_cliente ORDER BY total_pedidos DESC"
+        cursor.execute(query)
+    else:
+        query += " WHERE c.id_empresa = ? GROUP BY c.id_cliente ORDER BY total_pedidos DESC"
+        cursor.execute(query, (current_user.id_empresa,))
+    
+    clientes = cursor.fetchall()
+    conn.close()
+    return render_template('gestion_clientes.html', clientes=clientes)
 
-def _get_total_carrito():
-    """
-    Calcula el total de los productos en el carrito, útil para recargas con errores.
-    """
-    total = 0.0
-    if 'carrito' in session:
-        for item_data in session['carrito'].values():
-            total += item_data.get('precio', 0.0) * item_data.get('cantidad', 0)
-    return total
-# ---------------------------------------------------------------------------
 
-@app.route('/pedido_confirmacion/<int:id_pedido>')
-def pedido_confirmacion(id_pedido):
-    """Muestra la confirmación del pedido y el ticket para imprimir."""
-    pedido = _obtener_pedido_completo_por_id(id_pedido)
-    if not pedido:
-        flash("Pedido no encontrado.", "danger")
-        return redirect(url_for('index'))
+@app.route('/gestion/cupones/eliminar/<int:id_cupon>', methods=['POST'])
+@login_required
+def eliminar_cupon(id_cupon):
+    conn = conectar_db(); cursor = conn.cursor()
+    # Verificación de seguridad: No borrar cupones de otra empresa
+    if not current_user.has_role('super_admin'):
+        cursor.execute("DELETE FROM cupones WHERE id_cupon = ? AND id_empresa = ?", (id_cupon, current_user.id_empresa))
+    else:
+        cursor.execute("DELETE FROM cupones WHERE id_cupon = ?", (id_cupon,))
+    conn.commit(); conn.close()
+    flash("Cupón eliminado.", "info")
+    return redirect(url_for('gestion_cupones'))
 
-    ticket_html = pedido.generar_ticket()
-    return render_template('pedido_confirmacion.html', pedido=pedido, ticket_html=ticket_html, admin_view=True)
 
-# --- Rutas de API para el Carrito (AJAX) ---
+@app.route('/api/limpiar_cupon', methods=['POST'])
+def limpiar_cupon():
+    session.pop('cupon_aplicado', None)
+    session.modified = True # <--- Forzamos a Flask a guardar el cambio en la sesión
+    return jsonify({"success": True})
 
-@app.route('/api/add_to_cart/<int:plato_id>', methods=['POST'])
-def add_to_cart(plato_id):
-    """Añade un plato al carrito de la sesión, respetando la empresa del contexto del frontend."""
-    cantidad = int(request.form.get('cantidad', 1))
-    if cantidad <= 0:
-        return jsonify({"success": False, "message": "La cantidad debe ser un número positivo"}), 400
 
-    company_id_for_frontend = get_company_id_for_frontend_context()
 
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id_plato, nombre, precio, rubro FROM platos WHERE id_plato = ? AND activo = 1 AND id_empresa = ?",
-                   (plato_id, company_id_for_frontend))
-    plato = cursor.fetchone()
+@app.route('/hacer_pedido', methods=['GET', 'POST'])
+def hacer_pedido():
+    # Detectamos el ID de la empresa (sucursal) seleccionada
+    cid = get_company_id_for_frontend_context()
+    carrito = session.get('carrito', {})
+    
+    # Obtenemos los datos de la empresa seleccionada
+    conn_info = conectar_db()
+    cursor_info = conn_info.cursor()
+    cursor_info.execute("SELECT * FROM empresas WHERE id_empresa = ?", (cid,))
+    empresa_actual = cursor_info.fetchone()
+    conn_info.close()
+
+    # --- INICIALIZACIÓN CLAVE ---
+    # Esta línea debe estar aquí para que siempre exista, sea GET o POST
+    request_form = {} 
+    # ----------------------------
+
+    
+    
+    # --- LÓGICA DE HORARIOS MULTI-TURNO ---
+    abierto = esta_abierto(cid)
+
+    # NUEVO: Obtenemos los turnos específicos de HOY para mostrarlos en la vista
+    conn_h = conectar_db(); cursor_h = conn_h.cursor()
+    cursor_h.execute("SELECT horarios_json FROM empresas WHERE id_empresa = ?", (cid,))
+    res_h = cursor_h.fetchone(); conn_h.close()
+    
+    horarios_data = json.loads(res_h['horarios_json']) if res_h and res_h['horarios_json'] else {}
+    dia_hoy_str = datetime.now().strftime('%w') # 0=Dom, 1=Lun...
+    config_hoy = horarios_data.get(dia_hoy_str, {'abierto': False, 'turnos': []})
+    turnos_de_hoy = config_hoy['turnos'] # Esta variable la pasaremos al render_template al final
+
+    if request.method == 'POST':
+        if not abierto:
+            flash("Lo sentimos, el restaurante está cerrado actualmente.", "danger")
+            return redirect(url_for('hacer_pedido'))
+            
+        request_form = request.form
+        
+        if not carrito:
+            flash("Tu carrito está vacío. Agrega productos antes de finalizar.", "warning")
+            return redirect(url_for('hacer_pedido'))
+
+        # 1. Obtener datos del formulario
+        n = request.form.get('nombre', '').strip()
+        a = request.form.get('apellido', '').strip()
+        tel = request.form.get('telefono', '').strip() 
+        
+        calle = request.form.get('calle', '').strip()
+        altura = request.form.get('altura', '').strip()
+        localidad = request.form.get('localidad', '').strip()
+        provincia = request.form.get('provincia', '').strip()
+        piso_depto = request.form.get('piso_depto', '').strip()
+        
+        d_completa = f"{calle} {altura}, {localidad}, {provincia}"
+        if piso_depto:
+            d_completa += f" ({piso_depto})"
+        
+        ho = request.form.get('horario_entrega')
+        fp = request.form.get('forma_pago', 'Efectivo')
+        es_envio = 'es_envio_solicitado' in request.form
+        
+        
+        
+        
+        
+        
+        
+        # Validación: Teléfono obligatorio para CRM
+        if not n or not ho or not tel:
+            flash("Nombre, Teléfono y Horario son obligatorios.", "danger")
+        else:
+            lat_cliente = None
+            lon_cliente = None
+            error_geoloc = False
+
+            if es_envio:
+                if not calle or not altura or not localidad or not provincia:
+                    flash("Calle, Altura, Localidad y Provincia son obligatorias para el envío.", "danger")
+                    error_geoloc = True
+                else:
+                    lat_cliente, lon_cliente = obtener_coordenadas(d_completa)
+                    if lat_cliente is None:
+                        flash("No pudimos validar la dirección exacta. Revisa la calle y la altura.", "danger")
+                        error_geoloc = True
+                    else:
+                        if empresa_actual and empresa_actual['lat'] and empresa_actual['lon']:
+                            suc_lat = empresa_actual['lat']
+                            suc_lon = empresa_actual['lon']
+                        else:
+                            suc_lat = -37.3287
+                            suc_lon = -59.1369
+
+                        distancia_m = calcular_distancia_metros(suc_lat, suc_lon, lat_cliente, lon_cliente)
+                        max_distancia_m = RADIO_ENVIO_CUADRAS * CUADRA_METROS
+                        if distancia_m > max_distancia_m:
+                            cuadras_reales = int(distancia_m / CUADRA_METROS)
+                            flash(f"Fuera de radio: {cuadras_reales} cuadras (Máximo: {RADIO_ENVIO_CUADRAS}).", "warning")
+                            error_geoloc = True
+            
+            if not error_geoloc:
+                # 2. Calcular totales considerando cupones Y PUNTOS
+                stats = calcular_totales_carrito(cid)
+                costo_envio_final = stats['envio'] if es_envio else 0
+                
+                # --- LÓGICA DE DESCUENTOS COMBINADOS (CUPÓN + PUNTOS) ---
+                datos_cupon = session.get('cupon_aplicado', {})
+                monto_descuento_cupon = float(datos_cupon.get('descuento', 0))
+
+                datos_puntos = session.get('puntos_a_canjear', {})
+                monto_descuento_puntos = float(datos_puntos.get('descuento_pesos', 0))
+                
+                # Descuento total que va a la base de datos
+                descuento_total_pedido = monto_descuento_cupon + monto_descuento_puntos
+                
+                total_final = (stats['subtotal'] - descuento_total_pedido) + costo_envio_final
+                # -------------------------------------------------------
+
+                token_pedido = secrets.token_urlsafe(16)
+
+                # 3. Guardar en Base de Datos
+                conn = conectar_db(); cursor = conn.cursor()
+                try:
+                    # --- LÓGICA CRM: BUSCAR O CREAR CLIENTE ---
+                    cursor.execute("SELECT id_cliente, puntos FROM clientes WHERE telefono = ?", (tel,))
+                    res_cliente = cursor.fetchone()
+
+                    if res_cliente:
+                        id_cliente_crm = res_cliente['id_cliente']
+                        cursor.execute("""
+                            UPDATE clientes SET nombre = ?, apellido = ?, id_empresa = ? WHERE id_cliente = ?
+                        """, (n, a, cid, id_cliente_crm))
+                        
+                        # --- NUEVO: RESTAR PUNTOS SI SE USARON ---
+                        if monto_descuento_puntos > 0:
+                            puntos_usados = datos_puntos.get('puntos', 0)
+                            cursor.execute("UPDATE clientes SET puntos = puntos - ? WHERE id_cliente = ?", 
+                                           (puntos_usados, id_cliente_crm))
+                    else:
+                        fecha_reg = datetime.now().strftime('%Y-%m-%d')
+                        cursor.execute("""
+                            INSERT INTO clientes (nombre, apellido, telefono, id_empresa, fecha_registro) 
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (n, a, tel, cid, fecha_reg))
+                        id_cliente_crm = cursor.lastrowid
+                    # ----------------------------------------------------------------------------------
+
+                    #fecha_actual_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    #horario_entrega_completo = f"{datetime.now().strftime('%Y-%m-%d')} {ho}:00"
+
+                    # --- REEMPLÁZALO POR ESTO ---
+                    ahora_arg = get_now_arg()
+                    fecha_actual_str = ahora_arg.strftime('%Y-%m-%d %H:%M:%S')
+
+                    # Para el horario de entrega, usamos la fecha de hoy en Argentina + el horario elegido
+                    horario_entrega_completo = f"{ahora_arg.strftime('%Y-%m-%d')} {ho}:00"
+                    
+                    #-------------------------------------------------------------------------------------
+                                        
+                    codigo_promo = datos_cupon.get('codigo')
+
+                    cursor.execute("""
+                        INSERT INTO pedidos (
+                            token, cliente_nombre, cliente_apellido, direccion_entrega, es_envio, 
+                            horario_entrega, costo_envio, costo_total, forma_pago, 
+                            estado_pago, estado_envio, fecha_creacion, id_empresa,
+                            lat_cliente, lon_cliente, id_cliente, telefono_cliente, 
+                            descuento_aplicado, cupon_codigo
+                        ) VALUES (?,?,?,?,?,?,?,?,?,'Pendiente','Pendiente de WhatsApp',?,?,?,?,?,?,?,?)
+                    """, (token_pedido, n, a, d_completa, int(es_envio), horario_entrega_completo, 
+                        costo_envio_final, total_final, fp, fecha_actual_str, cid,
+                        lat_cliente, lon_cliente, id_cliente_crm, tel, 
+                        descuento_total_pedido, codigo_promo)) 
+                                        
+                    pid = cursor.lastrowid
+
+                    # Guardado de items
+                    for cart_key, data in carrito.items():
+                        cursor.execute("""
+                            INSERT INTO items_pedido (id_pedido, id_plato, cantidad, precio_unitario) 
+                            VALUES (?,?,?,?)
+                        """, (pid, int(data['id_plato']), data['cantidad'], data['precio_total_unitario']))
+                        
+                        item_id = cursor.lastrowid
+                        if data.get('opciones_texto'):
+                            cursor.execute("INSERT INTO items_pedido_modificadores (id_item_pedido, nombre_modificador, nombre_opcion, precio_pagado) VALUES (?, 'Opciones', ?, 0)", (item_id, data['opciones_texto']))
+                        if data.get('notas'):
+                            cursor.execute("INSERT INTO items_pedido_modificadores (id_item_pedido, nombre_modificador, nombre_opcion, precio_pagado) VALUES (?, 'Notas', ?, 0)", (item_id, data['notas']))
+                    
+                    conn.commit()
+                    
+                    
+                    
+                    # --- LÓGICA DE MERCADO PAGO ---
+                    if fp == 'Mercado Pago' and empresa_actual['mp_access_token']:
+                        sdk = mercadopago.SDK(empresa_actual['mp_access_token'])
+                        
+                        preference_data = {
+                            "items": [
+                                {
+                                    "title": f"Pedido #{pid} - {empresa_actual['nombre']}",
+                                    "quantity": 1,
+                                    "unit_price": float(total_final),
+                                    "currency_id": "ARS"
+                                }
+                            ],
+                            "back_urls": {
+                                "success": url_for('pago_resultado', status='success', _external=True) + f"?id_pedido={pid}",
+                                "failure": url_for('pago_resultado', status='failure', _external=True) + f"?id_pedido={pid}",
+                                "pending": url_for('pago_resultado', status='pending', _external=True) + f"?id_pedido={pid}"
+                            },
+                            "auto_return": "approved",
+                            "external_reference": str(pid)
+                        }
+                        
+                        preference_response = sdk.preference().create(preference_data)
+                        url_pago = preference_response["response"]["init_point"]
+                        
+                        session.pop('carrito', None)
+                        session.pop('puntos_a_canjear', None) # Limpiar puntos
+                        return redirect(url_pago)
+                    
+                    # Si es efectivo u otro medio
+                    session.pop('carrito', None)
+                    session.pop('cupon_aplicado', None)
+                    session.pop('puntos_a_canjear', None) # Limpiar puntos
+                   
+                    flash("Pedido registrado. Por favor, confírmalo por WhatsApp.", "info")
+                    return redirect(url_for('seguimiento_pedido', token=token_pedido))
+                    
+                except Exception as e:
+                    conn.rollback()
+                    flash(f"Error crítico al guardar: {e}", "danger")
+                finally:
+                    conn.close()
+
+    # --- LÓGICA DE RENDERIZADO (GET) ---
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT * FROM platos WHERE activo = 1 AND id_empresa = ?", (cid,))
+    platos_db = [dict(row) for row in cursor.fetchall()]
+    
+      # --- APLICACIÓN DEL PUNTO 2: VALIDACIÓN DE STOCK REAL ---
+    for plato in platos_db:
+        disponible, motivo_faltante = verificar_disponibilidad_plato(plato['id_plato'])
+        plato['disponible'] = disponible
+        plato['motivo_faltante'] = motivo_faltante
+    # ---------------------------------------------------------
+    
+    cursor.execute("SELECT * FROM cupones WHERE id_empresa = ? AND activo = 1", (cid,))
+    promos_disponibles = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
-    if plato:
-        if 'carrito' not in session:
-            session['carrito'] = {}
-
-        plato_id_str = str(plato['id_plato'])
-        if plato_id_str in session['carrito']:
-            session['carrito'][plato_id_str]['cantidad'] += cantidad
-        else:
-            session['carrito'][plato_id_str] = {
-                'nombre': plato['nombre'],
-                'precio': plato['precio'],
-                'cantidad': cantidad,
-                'rubro': plato['rubro'] 
-            }
-        session.modified = True
-
-        total_items = sum(item['cantidad'] for item in session['carrito'].values())
-        return jsonify({"success": True, "message": f"{plato['nombre']} agregado al carrito.", "total_items": total_items})
-    return jsonify({"success": False, "message": "Plato no encontrado o inactivo"}), 404
-
-@app.route('/api/remove_from_cart/<int:plato_id>', methods=['POST'])
-def remove_from_cart(plato_id):
-    """Elimina un plato específico del carrito de la sesión."""
-    if 'carrito' in session:
-        plato_id_str = str(plato_id)
-        if plato_id_str in session['carrito']:
-            del session['carrito'][plato_id_str]
-            session.modified = True
-            total_items = sum(item['cantidad'] for item in session['carrito'].values())
-            return jsonify({"success": True, "message": "Ítem eliminado del carrito.", "total_items": total_items})
-    return jsonify({"success": False, "message": "Ítem no encontrado en el carrito"}), 404
-
-@app.route('/api/update_cart_quantity/<int:plato_id>', methods=['POST'])
-def update_cart_quantity(plato_id):
-    """
-    Actualiza la cantidad de un plato en el carrito de la sesión.
-    Si la cantidad es 0, elimina el plato. Si el plato no existe y la cantidad > 0, lo añade.
-    """
-    cantidad = request.form.get('cantidad')
+    franjas = obtener_franjas_disponibles(cid)
+    stats = calcular_totales_carrito(cid)
+    cupon_actual = session.get('cupon_aplicado', {})
+    puntos_actual = session.get('puntos_a_canjear', {})
     
-    if cantidad is None:
-        current_app.logger.warning(f"Request for plato_id {plato_id} missing 'cantidad' in form data.")
-        return jsonify({"success": False, "message": "Falta el campo 'cantidad'."}), 400
+    carrito_detalle = []
+    for k, v in carrito.items():
+        carrito_detalle.append({
+            'cart_key': k, 'id_plato': v['id_plato'], 'nombre': v['nombre'],
+            'cantidad': v['cantidad'], 'opciones': v.get('opciones_texto', ''),
+            'notas': v.get('notas', ''), 'precio_unitario': v['precio_total_unitario'],
+            'subtotal': v['precio_total_unitario'] * v['cantidad']
+        })
+
+    # Al final de hacer_pedido en app.py
+    horarios_para_vista = obtener_horarios_empresa(cid)
+    
+    return render_template('hacer_pedido.html', 
+                           empresa=empresa_actual,
+                           platos=platos_db, 
+                           franjas_horarias=franjas,
+                           total_carrito=stats['subtotal'], 
+                           costo_envio=stats['envio'], 
+                           carrito_detalle=carrito_detalle,
+                           carrito=carrito,
+                           cid=cid,
+                           promos_disponibles=promos_disponibles,
+                           cupon_actual=cupon_actual,
+                           puntos_actual=puntos_actual,
+                           request_form=request_form,
+                           
+                           HORARIOS_TURNOS=config_hoy['turnos'],#horarios_para_vista, 
+                           abierto=abierto)
+   
+    
+     
+import urllib.parse # <--- Añadir al inicio de app.py
+
+@app.route('/pago/resultado/<status>')
+def pago_resultado(status):
+    id_pedido = request.args.get('id_pedido')
+    
+    if status == 'success':
+        conn = conectar_db(); cursor = conn.cursor()
+        ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
-    try:
-        cantidad = int(cantidad)
-    except ValueError:
-        current_app.logger.warning(f"Request for plato_id {plato_id} received invalid 'cantidad': {cantidad}")
-        return jsonify({"success": False, "message": "El valor de 'cantidad' debe ser un número entero."}), 400
-
-    plato_id_str = str(plato_id)
-
-    if 'carrito' not in session:
-        session['carrito'] = {}
-        current_app.logger.debug("Carrito inicializado en la sesión.")
-
-    if cantidad <= 0:
-        if plato_id_str in session['carrito']:
-            del session['carrito'][plato_id_str]
-            session.modified = True
-            current_app.logger.info(f"Plato {plato_id_str} eliminado del carrito. Cantidad <= 0.")
-            return jsonify({"success": True, "message": "Ítem eliminado del carrito."})
-        else:
-            current_app.logger.info(f"Intento de eliminar plato {plato_id_str} (cantidad 0) que no está en el carrito.")
-            return jsonify({"success": True, "message": "Ítem no encontrado en el carrito (no se pudo eliminar), pero la cantidad es 0."})
-
-    if plato_id_str in session['carrito']:
-        session['carrito'][plato_id_str]['cantidad'] = cantidad
-        session.modified = True
-        current_app.logger.info(f"Cantidad del plato {plato_id_str} actualizada a {cantidad}.")
-        return jsonify({"success": True, "message": "Cantidad actualizada."})
+        # 1. Ponemos el pedido en RECIBIDO
+        cursor.execute("""
+            UPDATE pedidos 
+            SET estado_pago = 'Pagado', 
+                estado_envio = 'Recibido', 
+                fecha_pago = ? 
+            WHERE id_pedido = ?
+        """, (ahora, id_pedido))
+        
+        # 2. Registramos el dinero en caja
+        cursor.execute("SELECT costo_total, id_empresa FROM pedidos WHERE id_pedido = ?", (id_pedido,))
+        p = cursor.fetchone()
+        cursor.execute("""
+            INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_empresa) 
+            VALUES ('Ingreso', ?, ?, ?, ?, ?)
+        """, (p['costo_total'], f"Pago Online Pedido #{id_pedido}", ahora, id_pedido, p['id_empresa']))
+        
+        conn.commit(); conn.close()
+        
+        # --- LÓGICA DE STOCK ---
+        # Aquí descontamos los insumos porque el estado ya es 'Recibido'
+        procesar_descuento_stock(id_pedido)
+        
+        # Buscamos el token para redirigir
+        conn = conectar_db(); cursor = conn.cursor()
+        cursor.execute("SELECT token FROM pedidos WHERE id_pedido = ?", (id_pedido,))
+        token = cursor.fetchone()['token']
+        conn.close()
+        
+        flash("¡Pago confirmado! Tu pedido ya está en cocina.", "success")
+        return redirect(url_for('seguimiento_pedido', token=token))
+    
     else:
-        current_app.logger.info(f"Intentando añadir plato {plato_id_str} al carrito con cantidad {cantidad}.")
+        flash("El pago no pudo procesarse.", "danger")
+        return redirect(url_for('hacer_pedido'))
+    
+    
+@app.route('/pedido/seguimiento/<token>')
+def seguimiento_pedido(token):
+    pedido = _obtener_pedido_por_token(token)
+    if not pedido: 
+        flash("Pedido no encontrado.", "danger")
+        return redirect(url_for('index'))
+    
+    # Abrimos conexión para buscar datos de empresa y puntos del cliente
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Buscamos los datos de la empresa para el link de WhatsApp (Original)
+    cursor.execute("SELECT nombre, telefono FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+    empresa = cursor.fetchone()
+
+    # 2. NUEVO: Buscamos los puntos acumulados del cliente (Lógica de Puntos CRM)
+    puntos_totales = 0
+    if pedido.id_cliente:
+        cursor.execute("SELECT puntos FROM clientes WHERE id_cliente = ?", (pedido.id_cliente,))
+        res_c = cursor.fetchone()
+        if res_c:
+            puntos_totales = res_c['puntos']
+    
+    conn.close()
+
+    # 3. Lógica para el link de WhatsApp (Original)
+    whatsapp_url = None
+    if pedido.estado_envio == 'Pendiente de WhatsApp' and empresa['telefono']:
+        # Preparamos el mensaje para el restaurante
+        mensaje = f"✅ *CONFIRMACIÓN DE PEDIDO #{pedido.id_pedido}*\n\n"
+        mensaje += f"Hola {empresa['nombre']}, mi nombre es {pedido.cliente_nombre}.\n"
+        mensaje += f"Confirmo mi pedido por un total de *${pedido.costo_total}*.\n\n"
+        mensaje += f"Link de seguimiento:\n{request.base_url}"
         
-        try:
-            company_id_for_frontend = get_company_id_for_frontend_context()
-        except NameError:
-            current_app.logger.error("Function 'get_company_id_for_frontend_context' is not defined.")
-            return jsonify({"success": False, "message": "Error interno: Función de empresa no definida."}), 500
-        except Exception as e:
-            current_app.logger.error(f"Error getting company_id_for_frontend_context: {e}")
-            return jsonify({"success": False, "message": "Error interno al obtener contexto de empresa."}), 500
+        # Limpiamos el teléfono (solo números)
+        tel_limpio = "".join(filter(str.isdigit, empresa['telefono']))
+        
+        # URL final
+        whatsapp_url = f"https://wa.me/{tel_limpio}?text={urllib.parse.quote(mensaje)}"
 
-        conn = None
-        try:
-            conn = conectar_db()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id_plato, nombre, precio, rubro FROM platos WHERE id_plato = ? AND activo = 1 AND id_empresa = ?",
-                           (plato_id, company_id_for_frontend))
-            plato_data = cursor.fetchone()
-            
-            if plato_data:
-                session['carrito'][plato_id_str] = {
-                    'nombre': plato_data['nombre'],
-                    'precio': plato_data['precio'],
-                    'cantidad': cantidad,
-                    'rubro': plato_data['rubro']
-                }
-                session.modified = True
-                current_app.logger.info(f"Plato {plato_data['nombre']} (ID: {plato_id_str}) añadido al carrito.")
-                return jsonify({"success": True, "message": f"{plato_data['nombre']} añadido al carrito."})
-            else:
-                current_app.logger.warning(f"Plato {plato_id_str} no encontrado, inactivo o no pertenece a la empresa {company_id_for_frontend}.")
-                return jsonify({"success": False, "message": "Plato no encontrado o inactivo."}), 404
-        except Exception as e:
-            current_app.logger.error(f"Error al conectar o consultar la base de datos para plato {plato_id_str}: {e}")
-            return jsonify({"success": False, "message": "Error interno al procesar la solicitud."}), 500
-        finally:
-            if conn:
-                conn.close()
+    # Retornamos el template incluyendo la variable puntos_cliente
+    return render_template('pedido_seguimiento.html', 
+                           pedido=pedido, 
+                           whatsapp_url=whatsapp_url, 
+                           puntos_cliente=puntos_totales)
 
-@app.route('/api/get_cart_status', methods=['GET'])
-def get_cart_status():
-    """Retorna el número total de ítems y el precio total actual del carrito."""
-    total_items = sum(item['cantidad'] for item in session.get('carrito', {}).values())
-    total_precio = 0
-    if 'carrito' in session:
-        for item_data in session['carrito'].values():
-            total_precio += item_data.get('precio', 0.0) * item_data.get('cantidad', 0)
 
-    return jsonify({"success": True, "total_items": total_items, "total_precio": total_precio})
+# Consulta de puntos
+@app.route('/api/consultar_puntos', methods=['POST'])
+def consultar_puntos():
+    data = request.json
+    telefono = data.get('telefono', '').strip()
+    
+    if not telefono:
+        return jsonify({"success": False, "message": "Ingrese un teléfono."})
 
-@app.route('/api/clear_cart', methods=['POST'])
-def clear_cart():
-    """Limpia completamente el carrito de la sesión."""
-    session.pop('carrito', None)
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT puntos FROM clientes WHERE telefono = ?", (telefono,))
+    res = cursor.fetchone()
+    conn.close()
+
+    if res:
+        puntos = res['puntos']
+        monto_descuento = puntos * VALOR_PESO_POR_PUNTO_CANJE
+        return jsonify({
+            "success": True, 
+            "puntos": puntos, 
+            "monto_pesos": monto_descuento
+        })
+    else:
+        return jsonify({"success": False, "message": "Cliente no encontrado o sin puntos."})
+
+@app.route('/api/aplicar_puntos', methods=['POST'])
+def aplicar_puntos():
+    data = request.json
+    telefono = data.get('telefono', '').strip()
+    puntos_a_canjear = int(data.get('puntos', 0))
+    
+    # Guardamos en sesión que el cliente quiere usar sus puntos
+    session['puntos_a_canjear'] = {
+        'telefono': telefono,
+        'puntos': puntos_a_canjear,
+        'descuento_pesos': puntos_a_canjear * VALOR_PESO_POR_PUNTO_CANJE
+    }
     session.modified = True
-    return jsonify({"success": True, "message": "Carrito vaciado.", "total_items": 0})
+    return jsonify({"success": True})
+
+@app.route('/api/quitar_puntos', methods=['POST'])
+def quitar_puntos():
+    session.pop('puntos_a_canjear', None)
+    return jsonify({"success": True})
 
 
-# --- Rutas de Administración/Gestión ---
 
+
+
+
+
+# --- Gestión ---
 @app.route('/gestion/pedidos')
 @login_required
 def gestion_pedidos():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa') or current_user.has_role('empleado')):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # --- CAPTURAR FILTROS DE LA URL ---
+    f_envio = request.args.get('f_envio', '').strip()
+    f_pago = request.args.get('f_pago', '').strip()
+    
+    # --- 1. LÓGICA DE ALERTAS DE STOCK BAJO ---
+    alertas_stock = []
+    try:
+        if current_user.has_role('super_admin', 'admin_empresa'):
+            cursor.execute("""
+                SELECT i.*, e.nombre as empresa_n 
+                FROM insumos i 
+                JOIN empresas e ON i.id_empresa = e.id_empresa
+                WHERE i.stock_actual <= i.stock_minimo
+            """)
+        else:
+            cursor.execute("""
+                SELECT * FROM insumos 
+                WHERE stock_actual <= stock_minimo AND id_empresa = ?
+            """, (current_user.id_empresa,))
+        alertas_stock = cursor.fetchall()
+    except sqlite3.OperationalError:
+        alertas_stock = []
 
-    conn = conectar_db()
-    cursor = conn.cursor()
-
-    base_query = """
-        SELECT p.id_pedido, p.cliente_nombre, p.cliente_apellido, p.direccion_entrega, p.horario_entrega,
-               p.forma_pago, p.costo_total, p.estado_pago, p.es_envio,
-               r.nombre AS repartidor_nombre, r.apellido AS repartidor_apellido,
-               e.nombre AS nombre_empresa
-        FROM pedidos p
-        LEFT JOIN repartidores r ON p.id_repartidor = r.id_repartidor
+    # --- 2. LÓGICA DE PEDIDOS CON PRIORIDAD (FILTRADA) ---
+    # Empezamos con la base. Nota: No cerramos la consulta con ";" para poder agregar filtros.
+    base = """
+        SELECT p.*, r.nombre as rep_n, e.nombre as empresa_n 
+        FROM pedidos p 
+        LEFT JOIN repartidores r ON p.id_repartidor = r.id_repartidor 
         LEFT JOIN empresas e ON p.id_empresa = e.id_empresa
+        WHERE date(p.horario_entrega) >= date('now', 'localtime')
     """
-    where_conditions, query_params = get_company_filter_conditions_and_params(table_alias='p')
-    
-    final_query_parts = [base_query]
-    if where_conditions:
-        final_query_parts.append("WHERE " + " AND ".join(where_conditions))
-    
-    final_query_parts.append("ORDER BY p.horario_entrega DESC")
-    
-    final_query = " ".join(final_query_parts)
+    params = []
 
-    cursor.execute(final_query, query_params)
-    pedidos = cursor.fetchall()
+    # A. Filtro de Empresa (Seguridad Multi-sucursal)
+    cond_cia, params_cia = get_company_filter_conditions_and_params(table_alias='p')
+    if cond_cia: 
+        base += " AND " + " AND ".join(cond_cia)
+        params.extend(params_cia)
+    
+    # --- NUEVO: APLICACIÓN REAL DE LOS FILTROS DE LA BARRA ---
+    if f_envio:
+        base += " AND p.estado_envio = ?"
+        params.append(f_envio)
+    
+    if f_pago:
+        base += " AND p.estado_pago = ?"
+        params.append(f_pago)
+    # --------------------------------------------------------
+
+    base += """
+        ORDER BY 
+            CASE 
+                WHEN p.estado_envio NOT IN ('Entregado', 'Cancelado') THEN 1
+                WHEN p.estado_envio = 'Entregado' THEN 2
+                ELSE 3 
+            END ASC,
+            p.horario_entrega ASC
+    """
+    
+    cursor.execute(base, params)
+    resultados = cursor.fetchall()
+    
+    pedidos_p = []
+    for r in resultados:
+        p = dict(r)
+        try:
+            p['horario_entrega_dt'] = datetime.strptime(p['horario_entrega'], '%Y-%m-%d %H:%M:%S')
+        except:
+            p['horario_entrega_dt'] = None
+        pedidos_p.append(p)
+
+    # --- 3. LÓGICA DE REPARTIDORES (SOLO ACTIVOS) ---
+    try:
+        id_e = int(current_user.id_empresa)
+    except:
+        id_e = None
+
+    if current_user.has_role('super_admin', 'admin_empresa'):
+        cursor.execute("SELECT * FROM repartidores WHERE activo = 1")
+    else:
+        cursor.execute("""
+            SELECT * FROM repartidores 
+            WHERE id_empresa = ? AND activo = 1
+        """, (id_e,))
+    
+    reps = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
-    pedidos_procesados = []
+    # Log para que verifiques en tu terminal
+    print(f"DEBUG: Filtros Aplicados -> Envio: {f_envio} | Pago: {f_pago}")
+
+    # --- 4. RENDERIZADO FINAL ---
+    return render_template('gestion_pedidos.html', 
+                           pedidos=pedidos_p, 
+                           repartidores=reps, 
+                           alertas_stock=alertas_stock,
+                           f_envio=f_envio, 
+                           f_pago=f_pago)
+       
+
+@app.route('/gestion/pedido/<int:id_pedido>/enviar_confirmacion_cliente')
+@login_required
+def enviar_confirmacion_cliente(id_pedido):
+    pedido = _obtener_pedido_completo_por_id(id_pedido)
+    if not pedido:
+        flash("Pedido no encontrado.", "danger")
+        return redirect(url_for('gestion_pedidos'))
+
+    conn = conectar_db(); cursor = conn.cursor()
+    # Traer nombre de la empresa y Alias
+    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+    empresa = cursor.fetchone()
+    alias = cargar_configuracion('TRANSFERENCIA_ALIAS', 'No definido', pedido.id_empresa)
+    conn.close()
+
+    nombre_empresa = empresa['nombre'] if empresa else "Nuestro Local"
+
+    # 1. Construir el saludo y detalle de productos
+    mensaje = f"¡Hola *{pedido.cliente_nombre}*! 🌟\n"
+    mensaje += f"Confirmamos tu pedido *#{pedido.id_pedido}* en *{nombre_empresa}*.\n\n"
+    
+    mensaje += "📝 *Detalle de tu compra:*\n"
+    for item in pedido.items:
+        mensaje += f"- {item['cantidad']}x {item['plato_nombre']} "
+        if item['detalles']:
+            mensaje += f"(_ {item['detalles']}_)"
+        mensaje += f": ${item['precio_unitario'] * item['cantidad']}\n"
+    
+    if pedido.costo_envio > 0:
+        mensaje += f"🚚 Envío: ${pedido.costo_envio}\n"
+    
+    mensaje += f"\n💰 *TOTAL A PAGAR: ${pedido.costo_total}*\n"
+    mensaje += f"🕒 *Entrega estimada:* {pedido.horario_entrega.strftime('%H:%M')} hs\n\n"
+
+    # 2. Agregar datos de transferencia si corresponde
+   # 2. Agregar datos de pago según corresponda
+    forma_pago_limpia = pedido.forma_pago.strip().lower()
+    if forma_pago_limpia == 'Transferencia':
+        mensaje += "💳 *Datos para el pago (Transferencia):*\n"
+        mensaje += f"Por favor, realizá la transferencia al siguiente Alias y *envianos el comprobante por este medio* para comenzar con la preparación:\n\n"
+        mensaje += f"📍 *ALIAS:* {alias}\n\n"
+        
+    elif forma_pago_limpia == 'Mercado Pago':
+        mensaje += "💳 *Datos para el pago (Mercado Pago):*\n"
+        mensaje += f"Para abonar por Mercado Pago, podés enviar el dinero a nuestro Alias:\n\n"
+        mensaje += f"📍 *ALIAS:* {alias}\n\n"
+        mensaje += "⏳ *Esperamos tu pago para comenzar a cocinar...*\n\n"
+        mensaje += "_Por favor, no olvides enviarnos el comprobante._\n\n"
+        
+    else:
+        # Para Efectivo u otros medios donde ya se considera confirmado
+        mensaje += f"💳 *Forma de pago:* {pedido.forma_pago}\n"
+        mensaje += "¡Ya estamos preparando tu pedido! 👨‍🍳\n\n"
+
+    mensaje += "¡Muchas gracias por elegirnos! 😊"
+    # 3. Limpiar teléfono del cliente y generar URL
+    # Asumimos que el teléfono está guardado en el pedido
+    # Usamos el helper para asegurar formato internacional si es necesario
+    tel_cliente = "".join(filter(str.isdigit, str(pedido.telefono_cliente)))
+    if len(tel_cliente) == 10: tel_cliente = "549" + tel_cliente
+    
+    whatsapp_url = f"https://wa.me/{tel_cliente}?text={urllib.parse.quote(mensaje)}"
+    
+    return redirect(whatsapp_url)
+
+
+    
+# --- GESTIÓN DE INSUMOS (Materia Prima) ---
+@app.route('/gestion/insumos', methods=['GET', 'POST'])
+@login_required
+def gestion_insumos():
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    if request.method == 'POST':
+        nombre = request.form.get('nombre', '').strip()
+        unidad = request.form.get('unidad_medida')
+        # Cantidad que estamos comprando/ingresando ahora
+        cantidad_ingresada = float(request.form.get('stock_actual', 0))
+        stock_m = float(request.form.get('stock_minimo', 0))
+        precio_c = float(request.form.get('precio_compra', 0))
+        
+        eid = current_user.id_empresa if current_user.id_empresa else DEFAULT_COMPANY_FOR_ORDERS
+
+        # 1. VALIDACIÓN: ¿Ya existe este insumo en esta empresa?
+        cursor.execute("SELECT id_insumo, stock_actual FROM insumos WHERE nombre = ? AND id_empresa = ?", (nombre, eid))
+        insumo_existente = cursor.fetchone()
+
+        if insumo_existente:
+            # 2. SI EXISTE: Sumamos el stock y actualizamos el precio de compra
+            nuevo_stock = insumo_existente['stock_actual'] + cantidad_ingresada
+            cursor.execute("""
+                UPDATE insumos 
+                SET stock_actual = ?, precio_compra = ?, stock_minimo = ?
+                WHERE id_insumo = ?
+            """, (nuevo_stock, precio_c, stock_m, insumo_existente['id_insumo']))
+            flash(f"Se sumaron {cantidad_ingresada} {unidad} a '{nombre}'. Stock total actualizado.", "info")
+        else:
+            # 3. NO EXISTE: Creamos el registro nuevo
+            cursor.execute("""
+                INSERT INTO insumos (nombre, unidad_medida, stock_actual, stock_minimo, precio_compra, id_empresa)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (nombre, unidad, cantidad_ingresada, stock_m, precio_c, eid))
+            flash(f"Nuevo insumo '{nombre}' registrado con éxito.", "success")
+        
+        conn.commit()
+
+    # --- LISTADO ---
+    if current_user.has_role('super_admin'):
+        cursor.execute("SELECT i.*, e.nombre as empresa_n FROM insumos i LEFT JOIN empresas e ON i.id_empresa = e.id_empresa")
+    else:
+        cursor.execute("SELECT * FROM insumos WHERE id_empresa = ?", (current_user.id_empresa,))
+    
+    insumos = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return render_template('gestion_insumos.html', insumos=insumos)
+
+
+
+# --- GESTIÓN DE RECETAS (Vincular Plato con Insumo) ---
+@app.route('/gestion/plato/<int:id_plato>/receta', methods=['GET', 'POST'])
+@login_required
+def gestion_receta(id_plato):
+    conn = conectar_db(); cursor = conn.cursor()
+
+    # 1. Buscamos los datos del plato y sus opciones (modificadores)
+    cursor.execute("SELECT * FROM platos WHERE id_plato = ?", (id_plato,))
+    plato = cursor.fetchone()
+    
+    if not plato:
+        conn.close(); abort(404)
+
+    # Traemos todas las opciones (variantes) del plato para el selector
+    cursor.execute("""
+        SELECT po.id_opcion, po.nombre as opcion_n, pm.nombre as mod_n 
+        FROM plato_opciones po 
+        JOIN plato_modificadores pm ON po.id_modificador = pm.id_modificador 
+        WHERE pm.id_plato = ?
+    """, (id_plato,))
+    opciones_plato = [dict(row) for row in cursor.fetchall()]
+
+    target_eid = plato['id_empresa']
+
+    if request.method == 'POST':
+        tipo_destino = request.form.get('tipo_destino') # 'base' o 'opt_ID'
+        id_insumo = request.form.get('id_insumo')
+        cantidad = float(request.form.get('cantidad'))
+        
+        if tipo_destino == 'base':
+            # --- LÓGICA RECETA BASE ---
+            cursor.execute("SELECT id_receta FROM recetas WHERE id_plato = ? AND id_insumo = ?", (id_plato, id_insumo))
+            existente = cursor.fetchone()
+            if existente:
+                cursor.execute("UPDATE recetas SET cantidad_requerida = ? WHERE id_receta = ?", (cantidad, existente['id_receta']))
+                flash("Ingrediente base actualizado.", "success")
+            else:
+                cursor.execute("INSERT INTO recetas (id_plato, id_insumo, cantidad_requerida) VALUES (?, ?, ?)", (id_plato, id_insumo, cantidad))
+                flash("Ingrediente base añadido.", "success")
+        else:
+            # --- LÓGICA EXTRAS (VARIANTES) ---
+            id_opcion = tipo_destino.replace('opt_', '')
+            cursor.execute("SELECT id FROM opciones_insumos WHERE id_opcion = ? AND id_insumo = ?", (id_opcion, id_insumo))
+            existente = cursor.fetchone()
+            if existente:
+                cursor.execute("UPDATE opciones_insumos SET cantidad_requerida = ? WHERE id = ?", (cantidad, existente['id']))
+                flash("Ingrediente de variante actualizado.", "success")
+            else:
+                cursor.execute("INSERT INTO opciones_insumos (id_opcion, id_insumo, cantidad_requerida) VALUES (?, ?, ?)", (id_opcion, id_insumo, cantidad))
+                flash("Ingrediente añadido a la variante.", "success")
+            
+        conn.commit()
+
+    # 2. Insumos disponibles de la empresa
+    cursor.execute("SELECT * FROM insumos WHERE id_empresa = ?", (target_eid,))
+    insumos_disponibles = [dict(row) for row in cursor.fetchall()]
+
+    # 3. Traemos la RECETA UNIFICADA (Base + Extras) para mostrar en la tabla
+    # Ingredientes Base
+    cursor.execute("""
+        SELECT r.id_receta as id_u, r.cantidad_requerida, i.nombre, i.unidad_medida, i.precio_compra, 
+               'Base' as aplica_a, 'base' as origen
+        FROM recetas r 
+        JOIN insumos i ON r.id_insumo = i.id_insumo 
+        WHERE r.id_plato = ?
+    """, (id_plato,))
+    receta_base = cursor.fetchall()
+
+    # Ingredientes de Extras
+    cursor.execute("""
+        SELECT oi.id as id_u, oi.cantidad_requerida, i.nombre, i.unidad_medida, i.precio_compra, 
+               po.nombre as aplica_a, 'opcion' as origen
+        FROM opciones_insumos oi 
+        JOIN insumos i ON oi.id_insumo = i.id_insumo 
+        JOIN plato_opciones po ON oi.id_opcion = po.id_opcion
+        JOIN plato_modificadores pm ON po.id_modificador = pm.id_modificador
+        WHERE pm.id_plato = ?
+    """, (id_plato,))
+    receta_extras = cursor.fetchall()
+
+    # Combinamos ambas listas para la tabla
+    receta_completa = [dict(r) for r in receta_base] + [dict(r) for r in receta_extras]
+    
+    conn.close()
+    return render_template('gestion_receta.html', 
+                           plato=plato, 
+                           insumos=insumos_disponibles, 
+                           receta=receta_completa,
+                           opciones=opciones_plato)
+    
+
+@app.route('/gestion/receta/eliminar_universal/<int:id_u>/<string:tipo>', methods=['POST'])
+@login_required
+def eliminar_ingrediente_universal(id_u, tipo):
+    conn = conectar_db(); cursor = conn.cursor()
+    id_plato = request.referrer.split('/')[-2] # Truco para volver a la misma página
+
+    if tipo == 'base':
+        cursor.execute("DELETE FROM recetas WHERE id_receta = ?", (id_u,))
+    else:
+        cursor.execute("DELETE FROM opciones_insumos WHERE id = ?", (id_u,))
+    
+    conn.commit(); conn.close()
+    flash("Ingrediente eliminado.", "info")
+    return redirect(request.referrer)
+
+
+@app.route('/gestion/reporte_rentabilidad')
+@login_required
+def reporte_rentabilidad():
+    if not current_user.has_role('admin_empresa') and not current_user.has_role('super_admin'):
+        abort(403)
+
+    start_date = request.args.get('start', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
+    end_date = request.args.get('end', datetime.now().strftime('%Y-%m-%d'))
+    cid = current_user.id_empresa if not current_user.has_role('super_admin') else request.args.get('cid')
+
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # Pedidos entregados
+    cursor.execute("""
+        SELECT * FROM pedidos 
+        WHERE date(fecha_creacion) BETWEEN ? AND ? 
+        AND estado_envio = 'Entregado'
+        """ + (" AND id_empresa = ?" if cid else ""), 
+        [start_date, end_date, cid] if cid else [start_date, end_date])
+    pedidos = [dict(row) for row in cursor.fetchall()]
+
+    # Egresos de caja
+    cursor.execute("""
+        SELECT * FROM ingresos_egresos 
+        WHERE tipo = 'Egreso' 
+        AND date(fecha_hora) BETWEEN ? AND ?
+        """ + (" AND id_empresa = ?" if cid else ""), 
+        [start_date, end_date, cid] if cid else [start_date, end_date])
+    egresos_lista = [dict(row) for row in cursor.fetchall()]
+
+    # INICIALIZACIÓN COMPLETA (Aseguramos que 'descuentos' exista)
+    totales = {
+        'ingreso_bruto': 0,        # Venta total antes de descuentos
+        'descuentos': 0,           # Cupones y puntos aplicados
+        'ingreso_neto': 0,         # Lo que realmente entró a caja (Bruto - Descuento)
+        'costo_materia_prima': 0,
+        'egresos_repartidores': 0,
+        'egresos_manuales': 0,
+        'utilidad_neta': 0
+    }
+
     for p in pedidos:
-        p_dict = dict(p)
-        p_dict['horario_entrega_dt'] = datetime.strptime(p_dict['horario_entrega'], '%Y-%m-%d %H:%M:%S')
-        pedidos_procesados.append(p_dict)
+        id_p = p['id_pedido']
+        costo_recetas = 0
+        
+        # Calcular costos (Recetas base)
+        cursor.execute("SELECT ip.cantidad, r.cantidad_requerida, i.precio_compra FROM items_pedido ip JOIN recetas r ON ip.id_plato = r.id_plato JOIN insumos i ON r.id_insumo = i.id_insumo WHERE ip.id_pedido = ?", (id_p,))
+        for ing in cursor.fetchall():
+            costo_recetas += (ing['cantidad'] * ing['cantidad_requerida'] * ing['precio_compra'])
 
-    conn = conectar_db()
-    cursor = conn.cursor()
-    base_repartidores_query = "SELECT id_repartidor, nombre, apellido, activo FROM repartidores"
-    where_rep_conditions, query_rep_params = get_company_filter_conditions_and_params() # No table_alias for repartidores directly
-    
-    final_rep_query_parts = [base_repartidores_query]
-    if where_rep_conditions:
-        final_rep_query_parts.append("WHERE " + " AND ".join(where_rep_conditions))
-    
-    final_rep_query_parts.append("ORDER BY nombre, apellido")
-    final_rep_query = " ".join(final_rep_query_parts)
+        # Calcular costos (Modificadores/Extras)
+        cursor.execute("SELECT ip.cantidad, oi.cantidad_requerida, ins.precio_compra FROM items_pedido ip JOIN items_pedido_modificadores ipm ON ip.id = ipm.id_item_pedido JOIN plato_opciones po ON ipm.nombre_opcion = po.nombre JOIN opciones_insumos oi ON po.id_opcion = oi.id_opcion JOIN insumos ins ON oi.id_insumo = ins.id_insumo WHERE ip.id_pedido = ?", (id_p,))
+        for extra in cursor.fetchall():
+            costo_recetas += (extra['cantidad'] * extra['cantidad_requerida'] * extra['precio_compra'])
 
-    cursor.execute(final_rep_query, query_rep_params)
-    repartidores = cursor.fetchall()
+        # ACUMULAR DATOS
+        venta_real_comida = p['costo_total'] - p['costo_envio']
+        totales['descuentos'] += (p['descuento_aplicado'] or 0)
+        totales['ingreso_neto'] += venta_real_comida
+        totales['ingreso_bruto'] += (venta_real_comida + (p['descuento_aplicado'] or 0))
+        totales['costo_materia_prima'] += costo_recetas
+
+    for e in egresos_lista:
+        if e['id_repartidor_origen']: totales['egresos_repartidores'] += e['monto']
+        else: totales['egresos_manuales'] += e['monto']
+
+    # GANANCIA FINAL
+    totales['utilidad_neta'] = totales['ingreso_neto'] - totales['costo_materia_prima'] - totales['egresos_repartidores'] - totales['egresos_manuales']
+
     conn.close()
+    return render_template('reporte_rentabilidad.html', totales=totales, egresos_detalle=egresos_lista, start=start_date, end=end_date)
 
-    print(f"Repartidores cargados para gestión: {repartidores}")
 
-    return render_template('gestion_pedidos.html',
-                           pedidos=pedidos_procesados,
-                           repartidores=repartidores)
+
+    
+@app.route('/gestion/receta/eliminar/<int:id_receta>', methods=['POST'])
+@login_required
+def eliminar_ingrediente_receta(id_receta):
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT id_plato FROM recetas WHERE id_receta = ?", (id_receta,))
+    res = cursor.fetchone()
+    if res:
+        pid = res['id_plato']
+        cursor.execute("DELETE FROM recetas WHERE id_receta = ?", (id_receta,))
+        conn.commit()
+        flash("Componente eliminado.", "info")
+        conn.close()
+        return redirect(url_for('gestion_receta', id_plato=pid))
+    conn.close()
+    return redirect(url_for('gestion_catalogo'))    
+
+
+@app.route('/gestion/insumos/editar/<int:id_insumo>', methods=['GET', 'POST'])
+@login_required
+def editar_insumo(id_insumo):
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # Buscamos el insumo
+    cursor.execute("SELECT * FROM insumos WHERE id_insumo = ?", (id_insumo,))
+    insumo = cursor.fetchone()
+    
+    if not insumo:
+        conn.close(); abort(404)
+
+    # Seguridad: Solo el dueño de la empresa puede editarlo
+    verificar_acceso_empresa(insumo['id_empresa'])
+
+    if request.method == 'POST':
+        n = request.form.get('nombre')
+        u = request.form.get('unidad_medida')
+        s_min = float(request.form.get('stock_minimo', 0))
+        p_compra = float(request.form.get('precio_compra', 0))
+
+        cursor.execute("""
+            UPDATE insumos 
+            SET nombre=?, unidad_medida=?, stock_minimo=?, precio_compra=?
+            WHERE id_insumo=?
+        """, (n, u, s_min, p_compra, id_insumo))
+        conn.commit(); conn.close()
+        flash("Insumo actualizado.", "success")
+        return redirect(url_for('gestion_insumos'))
+
+    conn.close()
+    return render_template('editar_insumo.html', insumo=insumo)
+
+
+@app.route('/gestion/opcion/<int:id_opcion>/receta', methods=['GET', 'POST'])
+@login_required
+def gestion_receta_opcion(id_opcion):
+    conn = conectar_db(); cursor = conn.cursor()
+
+    # 1. Buscamos los datos de la opción y el plato al que pertenece
+    cursor.execute("""
+        SELECT po.nombre as opcion_nombre, pm.nombre as modificador_nombre, p.id_empresa, p.nombre as plato_nombre, p.id_plato
+        FROM plato_opciones po
+        JOIN plato_modificadores pm ON po.id_modificador = pm.id_modificador
+        JOIN platos p ON pm.id_plato = p.id_plato
+        WHERE po.id_opcion = ?
+    """, (id_opcion,))
+    data = cursor.fetchone()
+
+    if request.method == 'POST':
+        id_insumo = request.form.get('id_insumo')
+        cantidad = float(request.form.get('cantidad'))
+        
+        # Guardar ingrediente para la variante
+        cursor.execute("""
+            INSERT INTO opciones_insumos (id_opcion, id_insumo, cantidad_requerida) 
+            VALUES (?, ?, ?)
+        """, (id_opcion, id_insumo, cantidad))
+        conn.commit()
+        flash("Ingrediente añadido a la variante.", "success")
+
+    # 2. Insumos disponibles y receta de la variante
+    cursor.execute("SELECT * FROM insumos WHERE id_empresa = ?", (data['id_empresa'],))
+    insumos_disponibles = cursor.fetchall()
+
+    cursor.execute("""
+        SELECT oi.*, i.nombre, i.unidad_medida, i.precio_compra 
+        FROM opciones_insumos oi 
+        JOIN insumos i ON oi.id_insumo = i.id_insumo 
+        WHERE oi.id_opcion = ?
+    """, (id_opcion,))
+    receta_variante = cursor.fetchall()
+    
+    conn.close()
+    return render_template('gestion_receta_opcion.html', data=data, insumos=insumos_disponibles, receta=receta_variante)
+
+
+    
+#@app.route('/gestion/pedido/<int:id_pedido>/detalle')
+#@login_required
+#def detalle_pedido(id_pedido):
+#    pedido = _obtener_pedido_completo_por_id(id_pedido)
+#    if not pedido:
+#        # Si el pedido no es suyo o no existe, lanzamos un 404 o 403
+#        flash("Pedido no encontrado o acceso denegado.", "danger")
+#        return redirect(url_for('gestion_pedidos'))
+#    
+#    # Doble verificación por seguridad
+#    verificar_acceso_empresa(pedido.id_empresa)
+#    
+#    return render_template('pedido_confirmacion.html', pedido=pedido, ticket_html=pedido.generar_ticket(), admin_view=True)
 
 @app.route('/gestion/pedido/<int:id_pedido>/detalle')
 @login_required
 def detalle_pedido(id_pedido):
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa') or current_user.has_role('empleado')):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
-
     pedido = _obtener_pedido_completo_por_id(id_pedido)
     if not pedido:
         flash("Pedido no encontrado.", "danger")
         return redirect(url_for('gestion_pedidos'))
+    
+    verificar_acceso_empresa(pedido.id_empresa)
+    
+    # Traer nombre de la empresa para el ticket
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+    empresa = cursor.fetchone(); conn.close()
+    nombre_e = empresa['nombre'] if empresa else "Restaurante"
 
-    ticket_html = pedido.generar_ticket()
+    # RENDERIZAMOS EL TICKET USANDO EL TEMPLATE
+    ticket_html = render_template('tickets/pedido_ticket.html', pedido=pedido, nombre_empresa=nombre_e)
+    
     return render_template('pedido_confirmacion.html', pedido=pedido, ticket_html=ticket_html, admin_view=True)
 
-@app.route('/gestion/pedido/<int:id_pedido>/asignar_repartidor', methods=['POST'])
+
+    
+@app.route('/gestion/pedido/<int:id_pedido>/imprimir')
 @login_required
-def asignar_repartidor(id_pedido):
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_pedidos'))
+def imprimir_pedido(id_pedido):
+    pedido = _obtener_pedido_completo_por_id(id_pedido)
+    if not pedido: abort(404)
+    
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+    empresa = cursor.fetchone(); conn.close()
+    nombre_e = empresa['nombre'] if empresa else "Restaurante"
+    
+    # Renderizamos el contenido del ticket
+    ticket_body = render_template('tickets/pedido_ticket.html', pedido=pedido, nombre_empresa=nombre_e)
+    
+    # Retornamos el envoltorio para la impresora
+    return render_template('tickets/imprimir_wrapper.html', ticket_body=ticket_body, id_pedido=id_pedido)
 
-    id_repartidor = request.form.get('id_repartidor')
-    if not id_repartidor:
-        flash("Debe seleccionar un repartidor.", "danger")
-        return redirect(url_for('gestion_pedidos'))
 
-    conn = conectar_db()
-    cursor = conn.cursor()
+    
+
+# Ejemplo de cómo actualizar los estados en tus rutas de gestión:
+# Modificación sugerida en app.py
+@app.route('/gestion/pedido/<int:id_pedido>/actualizar_estado_envio', methods=['POST'])
+@login_required
+def actualizar_estado_envio(id_pedido):
+    nuevo_estado = request.form.get('nuevo_estado')
+    ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Obtenemos los datos actuales del pedido antes de actualizar
+    cursor.execute("SELECT id_cliente, costo_total, estado_envio FROM pedidos WHERE id_pedido = ?", (id_pedido,))
+    pedido = cursor.fetchone()
+
+    if not pedido:
+        conn.close(); abort(404)
+
+    columna_fecha = ""
+    if nuevo_estado == 'En Preparación': columna_fecha = "fecha_preparacion"
+    elif nuevo_estado == 'En Camino': columna_fecha = "fecha_despacho"
+    elif nuevo_estado == 'Entregado': columna_fecha = "fecha_entrega"
+
+    # 2. LÓGICA DE PUNTOS: Si el nuevo estado es 'Entregado' y antes no lo estaba
+    if nuevo_estado == 'Entregado' and pedido['estado_envio'] != 'Entregado' and pedido['id_cliente']:
+        # Calculamos los puntos (Ej: $10.000 * 0.01 = 100 puntos)
+        puntos_ganados = int(float(pedido['costo_total']) * VALOR_PUNTO_POR_PESO)
+        
+        # Acreditamos los puntos al cliente en la tabla CRM
+        cursor.execute("UPDATE clientes SET puntos = puntos + ? WHERE id_cliente = ?", 
+                       (puntos_ganados, pedido['id_cliente']))
+        
+        print(f"PUNTOS CRM: Cliente {pedido['id_cliente']} ganó {puntos_ganados} puntos.")
+
+    # 3. Actualizamos el estado del pedido
+    if columna_fecha:
+        cursor.execute(f"UPDATE pedidos SET estado_envio = ?, {columna_fecha} = ? WHERE id_pedido = ?", 
+                       (nuevo_estado, ahora, id_pedido))
+    else:
+        cursor.execute("UPDATE pedidos SET estado_envio = ? WHERE id_pedido = ?", (nuevo_estado, id_pedido))
+    
+    conn.commit(); conn.close()
+    
+    # --- REDIRECCIÓN INTELIGENTE ---
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest' or 'api' in request.path:
+        return jsonify({"success": True})
+        
+    # Si el usuario es un repartidor, lo mandamos a su panel de entregas
+    if current_user.has_role('repartidor'):
+        flash(f"¡Pedido #{id_pedido} actualizado con éxito!", "success")
+        return redirect(url_for('panel_repartidor'))
+    
+    # Si es administrador o empleado del local, lo mandamos al detalle normal
+    return redirect(url_for('detalle_pedido', id_pedido=id_pedido))
+
+
+@app.route('/gestion/pedido/<int:id_pedido>/confirmar_whatsapp', methods=['POST'])
+@login_required
+def confirmar_whatsapp(id_pedido):
+    """Confirmación de pedido con lógica de detección de pago mejorada."""
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Actualizamos el estado del pedido
+    cursor.execute("UPDATE pedidos SET estado_envio = 'Recibido' WHERE id_pedido = ?", (id_pedido,))
+    conn.commit(); conn.close()
+    
+    # 2. Descuento de stock
     try:
-        update_query_base = "UPDATE pedidos SET id_repartidor = ?"
-        update_where_conditions = ["id_pedido = ?"]
-        update_params = [id_repartidor, id_pedido]
+        procesar_descuento_stock(id_pedido)
+    except: pass
 
-        company_conditions, company_params = get_company_filter_conditions_and_params()
-        update_where_conditions.extend(company_conditions)
-        update_params.extend(company_params)
+    # 3. Obtenemos el pedido completo
+    pedido = _obtener_pedido_completo_por_id(id_pedido)
+    if not pedido:
+        return redirect(url_for('gestion_pedidos'))
 
-        final_update_query = update_query_base + " WHERE " + " AND ".join(update_where_conditions)
+    # 4. Cargamos la configuración (Nombre de empresa y ALIAS)
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+    emp_res = cursor.fetchone()
+    nombre_empresa = emp_res['nombre'] if emp_res else "Nuestro Local"
+    
+    # IMPORTANTE: Cargamos el alias aquí arriba para que esté disponible en todos los IF
+    alias_pago = cargar_configuracion('TRANSFERENCIA_ALIAS', 'Consultar por este medio', pedido.id_empresa)
+    conn.close()
 
-        cursor.execute(final_update_query, update_params)
+    # 5. --- LÓGICA DE DETECCIÓN DE PAGO (Súper segura) ---
+    # Limpiamos el texto: quitamos espacios y pasamos a minúsculas
+    metodo_pago = str(pedido.forma_pago).lower().strip()
+    
+    # 6. Construcción del mensaje
+    mensaje = f"¡Hola *{pedido.cliente_nombre}*! 🌟\n"
+    mensaje += f"Confirmamos tu pedido *#{pedido.id_pedido}* en *{nombre_empresa}*.\n\n"
+    
+    mensaje += "📝 *Detalle de tu pedido:*\n"
+    for item in pedido.items:
+        mensaje += f"- {item['cantidad']}x {item['plato_nombre']} "
+        if item['detalles']: mensaje += f"({item['detalles']}) "
+        mensaje += f": ${item['precio_unitario'] * item['cantidad']}\n"
+    
+    if pedido.costo_envio > 0:
+        mensaje += f"🚚 Envío: ${pedido.costo_envio}\n"
+    
+    mensaje += f"\n💰 *TOTAL A PAGAR: ${pedido.costo_total}*\n"
+    mensaje += f"🕒 *Hora estimada de entrega:* {pedido.horario_entrega.strftime('%H:%M')} hs\n\n"
 
-        if cursor.rowcount == 0 and not current_user.has_role('super_admin'):
-             flash("Pedido no encontrado o no tienes permiso para asignarle un repartidor.", "danger")
-             conn.rollback()
-             return redirect(url_for('gestion_pedidos'))
+    # --- AQUÍ ESTÁ LA CORRECCIÓN CLAVE ---
+    if "transferencia" in metodo_pago:
+        mensaje += "💳 *Datos para el pago (Transferencia):*\n"
+        mensaje += f"Por favor, realizá la transferencia al siguiente Alias y envianos el comprobante:\n\n"
+        mensaje += f"📍 *ALIAS:* {alias_pago}\n\n"
+        
+    elif "mercado" in metodo_pago or "mp" in metodo_pago:
+        # Esta línea ahora detectará "Mercado Pago", "mercadopago", "MP", etc.
+        mensaje += "💳 *Datos para el pago (Mercado Pago):*\n"
+        mensaje += f"Para abonar por Mercado Pago, podés enviar el dinero a nuestro Alias:\n\n"
+        mensaje += f"📍 *ALIAS:* {alias_pago}\n\n"
+        mensaje += "⏳ *Esperamos tu pago para comenzar a cocinar...*\n"
+        mensaje += "_Por favor, envianos el comprobante por este medio._\n\n"
+        
+    else:
+        # Para Efectivo u otros
+        mensaje += f"💳 *Forma de pago:* {pedido.forma_pago}\n"
+        mensaje += "¡Ya estamos preparando tu pedido! 👨‍🍳\n\n"
 
-        conn.commit()
-        flash(f"Repartidor asignado al pedido #{id_pedido} con éxito.", "success")
-    except sqlite3.Error as e:
-        conn.rollback()
-        flash(f"Error al asignar repartidor: {e}", "danger")
-    finally:
-        conn.close()
-    return redirect(url_for('gestion_pedidos'))
+    mensaje += "¡Muchas gracias por elegirnos! 😊"
 
+    # 7. Formateo de teléfono y redirección
+    tel_limpio = "".join(filter(str.isdigit, str(pedido.telefono_cliente)))
+    if len(tel_limpio) == 10: tel_limpio = "549" + tel_limpio
+    
+    whatsapp_url = f"https://wa.me/{tel_limpio}?text={urllib.parse.quote(mensaje)}"
+    return redirect(whatsapp_url)
+     # --- AQUÍ ESTÁ EL TRUCO PARA LA SOLAPA NUEVA ---
+    #return render_template_string(f"""
+    #    <script>
+    #        // 1. Abrir WhatsApp en pestaña nueva
+    #        window.open("{whatsapp_url}", "_blank");
+    #        // 2. Redirigir la pestaña actual de vuelta a la gestión de pedidos
+    #        window.location.href = "{url_for('gestion_pedidos')}";
+    #    </script>
+    #    <p>Abriendo WhatsApp y actualizando pedidos...</p>
+    #""")
 
 @app.route('/gestion/pedido/<int:id_pedido>/marcar_pagado', methods=['POST'])
 @login_required
 def marcar_pedido_pagado(id_pedido):
-    """
-    Marca un pedido como 'Pagado' en la base de datos y registra un ingreso en la caja.
-    Si es un envío, registra el egreso al repartidor.
-    """
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa') or current_user.has_role('empleado')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('index'))
+    p = _obtener_pedido_completo_por_id(id_pedido)
+    conn = conectar_db(); cursor = conn.cursor(); f = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    cursor.execute("UPDATE pedidos SET estado_pago = 'Pagado', fecha_pago = ? WHERE id_pedido = ?", (f, id_pedido))
+    cursor.execute("INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_empresa) VALUES ('Ingreso', ?, ?, ?, ?, ?)", (p.costo_total, f"Pago #{id_pedido}", f, id_pedido, p.id_empresa))
+    conn.commit(); conn.close(); return redirect(url_for('gestion_pedidos'))
 
-    pedido = _obtener_pedido_completo_por_id(id_pedido)
-    if not pedido:
-        flash(f"Pedido con ID {id_pedido} no encontrado o no tienes permiso para verlo.", "danger")
-        return redirect(url_for('gestion_pedidos'))
-
-    if pedido.estado_pago == 'Pagado':
-        flash(f"El pedido #{id_pedido} ya está marcado como pagado.", "warning")
-        return redirect(url_for('gestion_pedidos'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    try:
-        fecha_pago_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        update_query_base = "UPDATE pedidos SET estado_pago = 'Pagado', fecha_pago = ?"
-        update_where_conditions = ["id_pedido = ?"]
-        update_params_pedido = [fecha_pago_str, id_pedido]
-        
-        company_conditions, company_params = get_company_filter_conditions_and_params()
-        update_where_conditions.extend(company_conditions)
-        update_params_pedido.extend(company_params)
-
-        final_update_query = update_query_base + " WHERE " + " AND ".join(update_where_conditions)
-        cursor.execute(final_update_query, update_params_pedido)
-
-
-        if cursor.rowcount == 0 and not current_user.has_role('super_admin'):
-            flash("Pedido no encontrado o no tienes permiso para marcarlo como pagado.", "danger")
-            conn.rollback()
-            return redirect(url_for('gestion_pedidos'))
-
-        cursor.execute("""
-            INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_repartidor_origen, id_empresa)
-            VALUES (?, ?, ?, ?, ?, NULL, ?)
-        """, ('Ingreso', pedido.costo_total, f"Pago de Pedido #{id_pedido} ({pedido.forma_pago})", fecha_pago_str, pedido.id_pedido, pedido.id_empresa))
-
-        if pedido.es_envio and pedido.id_repartidor:
-            pago_repartidor = get_pago_repartidor_por_envio()
-            cursor.execute("""
-                INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_repartidor_origen, id_empresa)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, ('Pago a Repartidor', pago_repartidor, f"Pago por envío Pedido #{id_pedido}", fecha_pago_str, pedido.id_pedido, pedido.id_repartidor, pedido.id_empresa))
-            flash(f"Se registró un pago de ${pago_repartidor:,.2f} al repartidor por este envío.", "info")
-
-        conn.commit()
-        flash(f"Pedido #{id_pedido} marcado como pagado y registrado como ingreso.", "success")
-
-    except sqlite3.Error as e:
-        conn.rollback()
-        flash(f"Error al marcar el pedido como pagado: {e}", "danger")
-    finally:
-        conn.close()
+@app.route('/gestion/pedido/<int:id_pedido>/asignar_repartidor', methods=['POST'])
+@login_required
+def asignar_repartidor(id_pedido):
+    rid = request.form.get('id_repartidor')
+    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("UPDATE pedidos SET id_repartidor = ? WHERE id_pedido = ?", (rid, id_pedido)); conn.commit(); conn.close()
     return redirect(url_for('gestion_pedidos'))
 
-@app.route('/gestion/catalogo')
-@login_required
-def gestion_catalogo():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa') or current_user.has_role('empleado')):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-
-    base_query = "SELECT id_plato, nombre, descripcion, precio, activo, id_empresa, rubro FROM platos"
-    where_conditions, query_params = get_company_filter_conditions_and_params()
-    
-    final_query_parts = [base_query]
-    if where_conditions:
-        final_query_parts.append("WHERE " + " AND ".join(where_conditions))
-    
-    final_query_parts.append("ORDER BY id_plato ASC")
-    final_query = " ".join(final_query_parts)
-
-    cursor.execute(final_query, query_params)
-    platos = cursor.fetchall()
-    conn.close()
-    return render_template('gestion_catalogo.html', platos=platos)
-
-@app.route('/gestion/catalogo/agregar', methods=['GET', 'POST'])
-@login_required
-def agregar_plato():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_catalogo'))
-
-    if request.method == 'POST':
-        nombre = request.form['nombre'].strip()
-        descripcion = request.form['descripcion'].strip()
-        rubro = request.form['rubro'].strip()
-        try:
-            precio = float(request.form['precio'].replace(',', '.'))
-            if precio <= 0:
-                flash("El precio debe ser un número positivo.", "danger")
-                return render_template('agregar_plato.html', request_form=request.form.to_dict())
-        except ValueError:
-            flash("Precio inválido. Ingrese un número.", "danger")
-            return render_template('agregar_plato.html', request_form=request.form.to_dict())
-
-        conn = conectar_db()
-        cursor = conn.cursor()
-        try:
-            plato_id_empresa = current_user.id_empresa
-            if current_user.has_role('super_admin'):
-                plato_id_empresa = request.form.get('id_empresa_asignar')
-                if not plato_id_empresa:
-                    plato_id_empresa = DEFAULT_COMPANY_FOR_ORDERS
-                else:
-                    plato_id_empresa = int(plato_id_empresa)
-                flash(f"Como Super Admin, el plato se ha asignado a la Empresa ID {plato_id_empresa}.", "info")
-            elif not plato_id_empresa:
-                 flash("Tu usuario no tiene una empresa asignada para agregar platos.", "danger")
-                 return redirect(url_for('gestion_catalogo'))
-
-            cursor.execute("INSERT INTO platos (nombre, descripcion, precio, activo, id_empresa, rubro) VALUES (?, ?, ?, 1, ?, ?)",
-                           (nombre, descripcion, precio, plato_id_empresa, rubro))
-            conn.commit()
-            flash(f"Plato '{nombre}' agregado con éxito.", "success")
-        except sqlite3.Error as e:
-            flash(f"Error al agregar plato: {e}", "danger")
-        finally:
-            conn.close()
-        return redirect(url_for('gestion_catalogo'))
-
-    empresas_disponibles = []
-    if current_user.has_role('super_admin'):
-        conn = conectar_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1 ORDER BY nombre")
-        empresas_disponibles = cursor.fetchall()
-        conn.close()
-
-    return render_template('agregar_plato.html', empresas_disponibles=empresas_disponibles, request_form={})
-
-@app.route('/gestion/catalogo/editar/<int:id_plato>', methods=['GET', 'POST'])
-@login_required
-def editar_plato(id_plato):
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_catalogo'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    base_query = "SELECT id_plato, nombre, descripcion, precio, activo, id_empresa, rubro FROM platos"
-    where_conditions = ["id_plato = ?"]
-    query_params = [id_plato]
-
-    company_conditions, company_params = get_company_filter_conditions_and_params()
-    where_conditions.extend(company_conditions)
-    query_params.extend(company_params)
-
-    final_query = base_query + " WHERE " + " AND ".join(where_conditions)
-
-    cursor.execute(final_query, query_params)
-    plato = cursor.fetchone()
-    conn.close()
-
-    if not plato:
-        flash("Plato no encontrado o no tienes permiso para editarlo.", "danger")
-        return redirect(url_for('gestion_catalogo'))
-
-    if request.method == 'POST':
-        nombre = request.form['nombre'].strip()
-        descripcion = request.form['descripcion'].strip()
-        rubro = request.form['rubro'].strip()
-        activo = 1 if 'activo' in request.form else 0
-        try:
-            precio = float(request.form['precio'].replace(',', '.'))
-            if precio <= 0:
-                flash("El precio debe ser un número positivo.", "danger")
-                return render_template('editar_plato.html', id_plato=id_plato, plato=plato, request_form=request.form.to_dict())
-        except ValueError:
-            flash("Precio inválido. Ingrese un número.", "danger")
-            return render_template('editar_plato.html', id_plato=id_plato, plato=plato, request_form=request.form.to_dict())
-
-        conn = conectar_db()
-        cursor = conn.cursor()
-        try:
-            update_query_base = """
-                UPDATE platos SET
-                    nombre = ?,
-                    descripcion = ?,
-                    precio = ?,
-                    activo = ?,
-                    rubro = ?
-            """
-            update_where_conditions = ["id_plato = ?"]
-            update_params = [nombre, descripcion, precio, activo, rubro, id_plato]
-
-            company_conditions, company_params = get_company_filter_conditions_and_params()
-            update_where_conditions.extend(company_conditions)
-            update_params.extend(company_params)
-
-            final_update_query = update_query_base + " WHERE " + " AND ".join(update_where_conditions)
-
-            cursor.execute(final_update_query, update_params)
-            if cursor.rowcount == 0 and not current_user.has_role('super_admin'):
-                 flash("Plato no encontrado o no tienes permiso para editarlo.", "danger")
-                 conn.rollback()
-                 return redirect(url_for('gestion_catalogo'))
-
-            conn.commit()
-            flash(f"Plato '{nombre}' actualizado con éxito.", "success")
-        except sqlite3.Error as e:
-            flash(f"Error al editar plato: {e}", "danger")
-        finally:
-            conn.close()
-        return redirect(url_for('gestion_catalogo'))
-
-    return render_template('editar_plato.html', plato=plato, request_form=plato)
-
-@app.route('/gestion/catalogo/eliminar/<int:id_plato>', methods=['POST'])
-@login_required
-def eliminar_plato(id_plato):
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_catalogo'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    try:
-        update_query_base = "UPDATE platos SET activo = 0"
-        update_where_conditions = ["id_plato = ?"]
-        update_params = [id_plato]
-
-        company_conditions, company_params = get_company_filter_conditions_and_params()
-        update_where_conditions.extend(company_conditions)
-        update_params.extend(company_params)
-
-        final_update_query = update_query_base + " WHERE " + " AND ".join(update_where_conditions)
-
-        cursor.execute(final_update_query, update_params)
-        if cursor.rowcount == 0 and not current_user.has_role('super_admin'):
-             flash("Plato no encontrado o no tienes permiso para inactivarlo.", "danger")
-             conn.rollback()
-             return redirect(url_for('gestion_catalogo'))
-
-        conn.commit()
-        flash(f"Plato con ID {id_plato} marcado como inactivo.", "success")
-    except sqlite3.Error as e:
-        flash(f"Error al inactivar plato: {e}", "danger")
-    finally:
-        conn.close()
-    return redirect(url_for('gestion_catalogo'))
-
-@app.route('/gestion/caja', methods=['GET', 'POST'])
-@login_required
-def arqueo_caja():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
-
-    if request.method == 'POST':
-        if 'registrar_egreso' in request.form:
-            try:
-                monto = float(request.form['monto'].replace(',', '.'))
-                if monto <= 0:
-                    flash("El monto debe ser un número positivo.", "danger")
-                    return redirect(url_for('arqueo_caja'))
-                descripcion = request.form['descripcion'].strip()
-                if not descripcion:
-                    flash("La descripción del egreso no puede estar vacía.", "danger")
-                    return redirect(url_for('arqueo_caja'))
-
-                conn = conectar_db()
-                cursor = conn.cursor()
-                try:
-                    fecha_hora_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    egreso_id_empresa = current_user.id_empresa
-                    if current_user.has_role('super_admin'):
-                        egreso_id_empresa = request.form.get('id_empresa_asignar_egreso')
-                        if not egreso_id_empresa:
-                            egreso_id_empresa = DEFAULT_COMPANY_FOR_ORDERS
-                        else:
-                            egreso_id_empresa = int(egreso_id_empresa)
-                        flash(f"Como Super Admin, el egreso se ha asignado a la Empresa ID {egreso_id_empresa}.", "info")
-                    elif not egreso_id_empresa:
-                        flash("Tu usuario no tiene una empresa asignada para registrar egresos.", "danger")
-                        return redirect(url_for('arqueo_caja'))
-
-                    cursor.execute("""
-                        INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_repartidor_origen, id_empresa)
-                        VALUES ('Egreso', ?, ?, ?, NULL, NULL, ?)
-                    """, (monto, descripcion, fecha_hora_str, egreso_id_empresa))
-                    conn.commit()
-                    flash(f"Egreso de ${monto:,.2f} registrado con éxito.", "success")
-                except sqlite3.Error as e:
-                    flash(f"Error al registrar egreso: {e}", "danger")
-                finally:
-                    conn.close()
-            except ValueError:
-                flash("Monto inválido. Ingrese un número.", "danger")
-            return redirect(url_for('arqueo_caja'))
-
-        elif 'realizar_arqueo' in request.form:
-            fecha_inicio_str = request.form['fecha_inicio'].strip()
-            fecha_fin_str = request.form['fecha_fin'].strip()
-
-            try:
-                fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0, microsecond=0)
-                fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59, microsecond=999999)
-
-                if fecha_inicio > fecha_fin:
-                    flash("La fecha de inicio no puede ser posterior a la fecha de fin.", "danger")
-                    return redirect(url_for('arqueo_caja'))
-
-                conn = conectar_db()
-                cursor = conn.cursor()
-
-                fecha_inicio_iso = fecha_inicio.strftime('%Y-%m-%d %H:%M:%S')
-                fecha_fin_iso = fecha_fin.strftime('%Y-%m-%d %H:%M:%S')
-
-                base_query = """
-                    SELECT ie.tipo, ie.monto, ie.descripcion, ie.fecha_hora, ie.id_pedido_origen,
-                           r.nombre AS repartidor_nombre, r.apellido AS repartidor_apellido,
-                           e.nombre AS nombre_empresa
-                    FROM ingresos_egresos ie
-                    LEFT JOIN repartidores r ON ie.id_repartidor_origen = r.id_repartidor
-                    LEFT JOIN empresas e ON ie.id_empresa = e.id_empresa
-                """
-                where_conditions = ["ie.fecha_hora BETWEEN ? AND ?"]
-                query_params = [fecha_inicio_iso, fecha_fin_iso]
-
-                company_conditions, company_params = get_company_filter_conditions_and_params(table_alias='ie')
-                where_conditions.extend(company_conditions)
-                query_params.extend(company_params)
-
-                final_query = base_query + " WHERE " + " AND ".join(where_conditions) + " ORDER BY ie.fecha_hora ASC"
-                
-                cursor.execute(final_query, query_params)
-                movimientos = cursor.fetchall()
-                conn.close()
-
-                total_ingresos = sum(m['monto'] for m in movimientos if m['tipo'] == 'Ingreso')
-                total_egresos = sum(m['monto'] for m in movimientos if m['tipo'] != 'Ingreso')
-                balance = total_ingresos - total_egresos
-
-                movimientos_procesados = []
-                for m in movimientos:
-                    m_dict = dict(m)
-                    fecha_dt = datetime.strptime(m_dict['fecha_hora'], '%Y-%m-%d %H:%M:%S')
-                    m_dict['fecha_hora_formateada'] = fecha_dt.strftime('%d/%m/%Y %H:%M')
-
-                    if m_dict['repartidor_nombre'] and m_dict['repartidor_apellido']:
-                        m_dict['repartidor_nombre_completo'] = f"{m_dict['repartidor_nombre']} {m_dict['repartidor_apellido']}"
-                    else:
-                        m_dict['repartidor_nombre_completo'] = None
-
-                    movimientos_procesados.append(m_dict)
-
-                session['arqueo_resultados'] = {
-                    'fecha_inicio': fecha_inicio.strftime('%d/%m/%Y'),
-                    'fecha_fin': fecha_fin.strftime('%d/%m/%Y'),
-                    'movimientos': movimientos_procesados,
-                    'total_ingresos': total_ingresos,
-                    'total_egresos': total_egresos,
-                    'balance': balance
-                }
-                return redirect(url_for('arqueo_caja'))
-
-            except ValueError:
-                flash("Formato de fecha inválido. Use AAAA-MM-DD.", "danger")
-                return redirect(url_for('arqueo_caja'))
-
-    arqueo_resultados = session.pop('arqueo_resultados', None)
-
-    empresas_para_egreso = []
-    if current_user.has_role('super_admin'):
-        conn = conectar_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1 ORDER BY nombre")
-        empresas_para_egreso = cursor.fetchall()
-        conn.close()
-
-    return render_template('arqueo_caja.html',
-                           arqueo_resultados=arqueo_resultados,
-                           now=datetime.now(),
-                           empresas_para_egreso=empresas_para_egreso)
-
-
-@app.route('/gestion/configuracion', methods=['GET', 'POST'])
-@login_required
-def gestion_configuracion():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
-
-    if request.method == 'POST':
-        config_id_empresa = None
-        if current_user.has_role('admin_empresa') and current_user.id_empresa:
-            config_id_empresa = current_user.id_empresa
-        elif current_user.has_role('super_admin'):
-            config_id_empresa_form = request.form.get('config_for_company')
-            if config_id_empresa_form and config_id_empresa_form != 'global':
-                config_id_empresa = int(config_id_empresa_form)
-
-        if 'update_envio_costo' in request.form:
-            try:
-                nuevo_costo_envio = float(request.form['costo_envio'].replace(',', '.'))
-                if nuevo_costo_envio < 0:
-                    flash("El costo de envío no puede ser negativo.", "danger")
-                else:
-                    guardar_configuracion('ENVIO_COSTO', nuevo_costo_envio, config_id_empresa)
-                    flash(f"Costo de envío actualizado a ${nuevo_costo_envio:,.2f} {'para tu empresa' if config_id_empresa else 'globalmente'}.", "success")
-            except ValueError:
-                flash("Valor de costo de envío inválido. Ingrese un número.", "danger")
-
-        elif 'update_pago_repartidor' in request.form:
-            try:
-                nuevo_pago_repartidor = float(request.form['pago_repartidor_por_envio'].replace(',', '.'))
-                if nuevo_pago_repartidor < 0:
-                    flash("El pago al repartidor no puede ser negativo.", "danger")
-                else:
-                    guardar_configuracion('PAGO_REPARTIDOR_POR_ENVIO', nuevo_pago_repartidor, config_id_empresa)
-                    flash(f"Pago por envío a repartidor actualizado a ${nuevo_pago_repartidor:,.2f} {'para tu empresa' if config_id_empresa else 'globalmente'}.", "success")
-            except ValueError:
-                flash("Valor de pago a repartidor inválido. Ingrese un número.", "danger")
-
-        return redirect(url_for('gestion_configuracion'))
-
-    costo_envio_actual = get_costo_envio()
-    pago_repartidor_actual = get_pago_repartidor_por_envio()
-
-    empresas_para_config = []
-    if current_user.has_role('super_admin'):
-        conn = conectar_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1 ORDER BY nombre")
-        empresas_para_config = cursor.fetchall()
-        conn.close()
-
-    return render_template('gestion_configuracion.html',
-                           costo_envio_actual=costo_envio_actual,
-                           pago_repartidor_actual=pago_repartidor_actual,
-                           empresas_para_config=empresas_para_config,
-                           current_user_company_id=current_user.id_empresa if current_user.is_authenticated else None)
-
-# --- RUTAS DE GESTIÓN DE REPARTIDORES ---
-@app.route('/gestion/repartidores')
+@app.route('/gestion/repartidores', methods=['GET', 'POST'])
 @login_required
 def gestion_repartidores():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-
-    base_query = "SELECT id_repartidor, nombre, apellido, telefono, activo, id_empresa FROM repartidores"
-    where_conditions, query_params = get_company_filter_conditions_and_params()
-    
-    final_query_parts = [base_query]
-    if where_conditions:
-        final_query_parts.append("WHERE " + " AND ".join(where_conditions))
-    
-    final_query_parts.append("ORDER BY apellido, nombre")
-    
-    final_query = " ".join(final_query_parts)
-
-    cursor.execute(final_query, query_params)
-    repartidores = cursor.fetchall()
-    conn.close()
-    return render_template('gestion_repartidores.html', repartidores=repartidores)
+    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("SELECT * FROM repartidores"); reps = cursor.fetchall(); conn.close()
+    return render_template('gestion_repartidores.html', repartidores=reps)
 
 @app.route('/gestion/repartidores/agregar', methods=['GET', 'POST'])
 @login_required
 def agregar_repartidor():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_repartidores'))
-
     if request.method == 'POST':
-        nombre = request.form['nombre'].strip()
-        apellido = request.form['apellido'].strip()
-        telefono = request.form['telefono'].strip()
+        # 1. Obtenemos los datos del formulario
+        nombre = request.form.get('nombre', '').strip()
+        apellido = request.form.get('apellido', '').strip()
+        telefono = request.form.get('telefono', '').strip()
+        
+        # 2. Determinamos la empresa (si es super_admin la elige, si no, es la suya)
+        if current_user.has_role('super_admin'):
+            id_empresa = request.form.get('id_empresa_asignar')
+            if not id_empresa:
+                id_empresa = DEFAULT_COMPANY_FOR_ORDERS
+        else:
+            id_empresa = current_user.id_empresa
 
+        # 3. Validación básica
         if not nombre or not apellido:
-            flash("Nombre y apellido del repartidor son obligatorios.", "danger")
+            flash("Nombre y Apellido son campos obligatorios.", "danger")
             return redirect(url_for('agregar_repartidor'))
 
-        conn = conectar_db()
-        cursor = conn.cursor()
+        # 4. Guardamos en la base de datos
         try:
-            repartidor_id_empresa = current_user.id_empresa
-            if current_user.has_role('super_admin'):
-                repartidor_id_empresa = request.form.get('id_empresa_asignar')
-                if not repartidor_id_empresa:
-                    repartidor_id_empresa = DEFAULT_COMPANY_FOR_ORDERS
-                else:
-                    repartidor_id_empresa = int(repartidor_id_empresa)
-                flash(f"Como Super Admin, el repartidor se ha asignado a la Empresa ID {repartidor_id_empresa}.", "info")
-            elif not repartidor_id_empresa:
-                flash("Tu usuario no tiene una empresa asignada para agregar repartidores.", "danger")
-                return redirect(url_for('gestion_repartidores'))
-
-            cursor.execute("INSERT INTO repartidores (nombre, apellido, telefono, activo, id_empresa) VALUES (?, ?, ?, 1, ?)",
-                           (nombre, apellido, telefono, repartidor_id_empresa))
+            conn = conectar_db()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO repartidores (nombre, apellido, telefono, activo, id_empresa) 
+                VALUES (?, ?, ?, 1, ?)
+            """, (nombre, apellido, telefono, id_empresa))
             conn.commit()
-            flash(f"Repartidor '{nombre} {apellido}' agregado con éxito.", "success")
-        except sqlite3.Error as e:
-            flash(f"Error al agregar repartidor: {e}", "danger")
-        finally:
             conn.close()
-        return redirect(url_for('gestion_repartidores'))
+            flash(f"Repartidor {nombre} {apellido} guardado con éxito.", "success")
+            return redirect(url_for('gestion_repartidores'))
+        except Exception as e:
+            flash(f"Error al guardar: {e}", "danger")
+            return redirect(url_for('agregar_repartidor'))
 
-    empresas_disponibles = []
+    # Si es GET, mostramos el formulario
+    empresas = []
     if current_user.has_role('super_admin'):
         conn = conectar_db()
         cursor = conn.cursor()
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1 ORDER BY nombre")
-        empresas_disponibles = cursor.fetchall()
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas = cursor.fetchall()
         conn.close()
+    
+    return render_template('agregar_repartidor.html', empresas_disponibles=empresas)
 
-    return render_template('agregar_repartidor.html', empresas_disponibles=empresas_disponibles)
 
 @app.route('/gestion/repartidores/editar/<int:id_repartidor>', methods=['GET', 'POST'])
 @login_required
 def editar_repartidor(id_repartidor):
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_repartidores'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    base_query = "SELECT id_repartidor, nombre, apellido, telefono, activo, id_empresa FROM repartidores"
-    where_conditions = ["id_repartidor = ?"]
-    query_params = [id_repartidor]
-
-    company_conditions, company_params = get_company_filter_conditions_and_params()
-    where_conditions.extend(company_conditions)
-    query_params.extend(company_params)
-
-    final_query = base_query + " WHERE " + " AND ".join(where_conditions)
-
-    cursor.execute(final_query, query_params)
-    repartidor = cursor.fetchone()
-    conn.close()
-
-    if not repartidor:
-        flash("Repartidor no encontrado o no tienes permiso para editarlo.", "danger")
-        return redirect(url_for('gestion_repartidores'))
-
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT * FROM repartidores WHERE id_repartidor = ?", (id_repartidor,))
+    r = cursor.fetchone()
+    
+    if not r:
+        conn.close(); abort(404)
+    
+    # VALIDACIÓN CLAVE:
+    verificar_acceso_empresa(r['id_empresa'])
+    
     if request.method == 'POST':
-        nombre = request.form['nombre'].strip()
-        apellido = request.form['apellido'].strip()
-        telefono = request.form['telefono'].strip()
-        activo = 1 if 'activo' in request.form else 0
-
-        if not nombre or not apellido:
-            flash("Nombre y apellido del repartidor son obligatorios.", "danger")
-            return redirect(url_for('editar_repartidor', id_repartidor=id_repartidor))
-
-        conn = conectar_db()
-        cursor = conn.cursor()
-        try:
-            update_query_base = """
-                UPDATE repartidores SET
-                    nombre = ?,
-                    apellido = ?,
-                    telefono = ?,
-                    activo = ?
-            """
-            update_where_conditions = ["id_repartidor = ?"]
-            update_params = [nombre, apellido, telefono, activo, id_repartidor]
-
-            company_conditions, company_params = get_company_filter_conditions_and_params()
-            update_where_conditions.extend(company_conditions)
-            update_params.extend(company_params)
-
-            final_update_query = update_query_base + " WHERE " + " AND ".join(update_where_conditions)
-
-            cursor.execute(final_update_query, update_params)
-            if cursor.rowcount == 0 and not current_user.has_role('super_admin'):
-                 flash("Repartidor no encontrado o no tienes permiso para editarlo.", "danger")
-                 conn.rollback()
-                 return redirect(url_for('gestion_repartidores'))
-
-            conn.commit()
-            flash(f"Repartidor '{nombre} {apellido}' actualizado con éxito.", "success")
-        except sqlite3.Error as e:
-            flash(f"Error al editar repartidor: {e}", "danger")
-        finally:
-            conn.close()
+        # ... (lógica de actualización que ya tienes)
+        n, a, t = request.form['nombre'], request.form['apellido'], request.form['telefono']
+        ac = (1 if 'activo' in request.form else 0)
+        cursor.execute("UPDATE repartidores SET nombre=?, apellido=?, telefono=?, activo=? WHERE id_repartidor=?", (n, a, t, ac, id_repartidor))
+        conn.commit(); conn.close()
         return redirect(url_for('gestion_repartidores'))
+    
+    conn.close()
+    return render_template('editar_repartidor.html', repartidor=r)
 
-    return render_template('editar_repartidor.html', repartidor=repartidor)
 
 @app.route('/gestion/repartidores/eliminar/<int:id_repartidor>', methods=['POST'])
 @login_required
 def eliminar_repartidor(id_repartidor):
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_repartidores'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    try:
-        update_query_base = "UPDATE repartidores SET activo = 0"
-        update_where_conditions = ["id_repartidor = ?"]
-        update_params = [id_repartidor]
-        
-        company_conditions, company_params = get_company_filter_conditions_and_params()
-        update_where_conditions.extend(company_conditions)
-        update_params.extend(company_params)
-
-        final_update_query = update_query_base + " WHERE " + " AND ".join(update_where_conditions)
-
-        cursor.execute(final_update_query, update_params)
-        if cursor.rowcount == 0 and not current_user.has_role('super_admin'):
-            flash("Repartidor no encontrado o no tienes permiso para inactivarlo.", "danger")
-            conn.rollback()
-            return redirect(url_for('gestion_repartidores'))
-
-        conn.commit()
-        flash(f"Repartidor con ID {id_repartidor} marcado como inactivo.", "success")
-    except sqlite3.Error as e:
-        flash(f"Error al inactivar repartidor: {e}", "danger")
-    finally:
-        conn.close()
+    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("UPDATE repartidores SET activo = 0 WHERE id_repartidor = ?", (id_repartidor,)); conn.commit(); conn.close()
     return redirect(url_for('gestion_repartidores'))
 
 @app.route('/gestion/reporte_repartidores', methods=['GET', 'POST'])
 @login_required
 def reporte_repartidores():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    base_repartidores_query = "SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1"
-    where_rep_conditions, query_rep_params = get_company_filter_conditions_and_params()
+    conn = conectar_db(); cursor = conn.cursor()
     
-    final_rep_query_parts = [base_repartidores_query]
-    if where_rep_conditions:
-        final_rep_query_parts.append(" AND " + " AND ".join(where_rep_conditions)) # Note the ' AND ' here for filtering within an existing WHERE
+    # --- CORRECCIÓN DE BÚSQUEDA DE REPARTIDORES ---
+    if current_user.has_role('super_admin', 'admin_empresa'):
+        # El super_admin ve a todos los repartidores activos de todas las empresas
+        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+    else:
+        # El admin de empresa ve solo sus repartidores
+        cursor.execute("""
+            SELECT id_repartidor, nombre, apellido 
+            FROM repartidores 
+            WHERE activo = 1 AND id_empresa = ?
+        """, (current_user.id_empresa,))
     
-    final_rep_query_parts.append("ORDER BY apellido, nombre")
-    final_rep_query = " ".join(final_rep_query_parts)
+    repartidores = cursor.fetchall()
+    # ----------------------------------------------
 
-    cursor.execute(final_rep_query, query_rep_params)
-    repartidores_activos = cursor.fetchall()
-    conn.close()
-
-    reporte_generado = None
+    reporte = None
     if request.method == 'POST':
-        id_repartidor_seleccionado = request.form.get('id_repartidor')
-        fecha_inicio_str = request.form.get('fecha_inicio')
-        fecha_fin_str = request.form.get('fecha_fin')
+        id_r = request.form.get('id_repartidor')
+        # ... (el resto de tu lógica POST sigue igual)
+        fi = request.form.get('fecha_inicio') + " 00:00:00"
+        ff = request.form.get('fecha_fin') + " 23:59:59"
+        
+        cursor.execute("""
+            SELECT id_pedido, cliente_nombre, cliente_apellido, fecha_creacion, costo_envio 
+            FROM pedidos 
+            WHERE id_repartidor = ? AND estado_envio = 'Entregado' 
+            AND pago_repartidor_status = 'Pendiente'
+            AND fecha_creacion BETWEEN ? AND ?
+        """, (id_r, fi, ff))
+        viajes = [dict(v) for v in cursor.fetchall()]
+        
+        cursor.execute("SELECT nombre, apellido, id_empresa FROM repartidores WHERE id_repartidor = ?", (id_r,))
+        rep_info = cursor.fetchone()
 
-        try:
-            fecha_inicio = datetime.strptime(fecha_inicio_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0, microsecond=0)
-            fecha_fin = datetime.strptime(fecha_fin_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59, microsecond=999999)
-
-            if fecha_inicio > fecha_fin:
-                flash("La fecha de inicio no puede ser posterior a la fecha de fin.", "danger")
-                return redirect(url_for('reporte_repartidores'))
-
-            conn = conectar_db()
-            cursor = conn.cursor()
-
-            base_query = """
-                SELECT ie.fecha_hora, ie.monto, ie.id_pedido_origen,
-                       r.nombre AS repartidor_nombre, r.apellido AS repartidor_apellido,
-                       e.nombre AS nombre_empresa
-                FROM ingresos_egresos ie
-                JOIN repartidores r ON ie.id_repartidor_origen = r.id_repartidor
-                LEFT JOIN empresas e ON ie.id_empresa = e.id_empresa
-            """
-            where_conditions = ["ie.tipo = 'Pago a Repartidor'", "ie.fecha_hora BETWEEN ? AND ?"]
-            query_params = [fecha_inicio.strftime('%Y-%m-%d %H:%M:%S'), fecha_fin.strftime('%Y-%m-%d %H:%M:%S')]
-
-            if id_repartidor_seleccionado and id_repartidor_seleccionado != 'todos':
-                where_conditions.append("ie.id_repartidor_origen = ?")
-                query_params.append(id_repartidor_seleccionado)
-
-            company_conditions, company_params = get_company_filter_conditions_and_params(table_alias='ie')
-            where_conditions.extend(company_conditions)
-            query_params.extend(company_params)
-
-            final_query = base_query + " WHERE " + " AND ".join(where_conditions) + " ORDER BY ie.fecha_hora ASC"
-            
-            cursor.execute(final_query, query_params)
-            pagos = cursor.fetchall()
-            conn.close()
-
-            total_pagado = sum(p['monto'] for p in pagos)
-
-            repartidor_nombre_reporte = "Todos los Repartidores"
-            if id_repartidor_seleccionado and id_repartidor_seleccionado != 'todos':
-                for rep in repartidores_activos:
-                    if str(rep['id_repartidor']) == id_repartidor_seleccionado:
-                        repartidor_nombre_reporte = f"{rep['nombre']} {rep['apellido']}"
-                        break
-
-            pagos_procesados = []
-            for p in pagos:
-                p_dict = dict(p)
-                p_dict['fecha_hora_formateada'] = datetime.strptime(p_dict['fecha_hora'], '%Y-%m-%d %H:%M:%S').strftime('%d/%m/%Y %H:%M')
-                pagos_procesados.append(p_dict)
-
-
-            reporte_generado = {
-                'fecha_inicio': fecha_inicio.strftime('%d/%m/%Y'),
-                'fecha_fin': fecha_fin.strftime('%d/%m/%Y'),
-                'repartidor_nombre': repartidor_nombre_reporte,
-                'pagos': pagos_procesados,
-                'total_pagado': total_pagado
+        if rep_info:
+            reporte = {
+                'repartidor': f"{rep_info['nombre']} {rep_info['apellido']}",
+                'id_repartidor': id_r,
+                'viajes': viajes,
+                'pago_por_viaje': get_pago_repartidor(rep_info['id_empresa']), # Usamos el costo de su empresa
+                'fecha_inicio': request.form.get('fecha_inicio'),
+                'fecha_fin': request.form.get('fecha_fin')
             }
 
-        except ValueError:
-            flash("Formato de fecha inválido. Use AAAA-MM-DD.", "danger")
-            return redirect(url_for('reporte_repartidores'))
-
-    return render_template('reporte_repartidores.html',
-                           repartidores=repartidores_activos,
-                           reporte_generado=reporte_generado,
-                           now=datetime.now())
+    conn.close()
+    return render_template('reporte_repartidores.html', repartidores=repartidores, reporte=reporte, now=datetime.now())
 
 
-# --- NUEVAS RUTAS DE GESTIÓN DE EMPRESAS Y USUARIOS (SUPER ADMIN) ---
 
+@app.route('/gestion/procesar_pago_repartidor', methods=['POST'])
+@login_required
+def procesar_pago_repartidor():
+    ids_pedidos = request.form.getlist('pedidos_a_pagar') # Recibe lista de IDs seleccionados
+    id_r = request.form.get('id_repartidor')
+    nombre_rep = request.form.get('nombre_repartidor')
+    
+    if not ids_pedidos:
+        flash("No seleccionaste ningún viaje para pagar.", "warning")
+        return redirect(url_for('reporte_repartidores'))
+
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    try:
+        # 1. BUSCAMOS LA EMPRESA DEL REPARTIDOR
+        cursor.execute("SELECT id_empresa FROM repartidores WHERE id_repartidor = ?", (id_r,))
+        rep_data = cursor.fetchone()
+        
+        # --- LÓGICA DE ASIGNACIÓN DE EMPRESA PARA CAJA ---
+        # Priorizamos el ID de la empresa del administrador que está realizando la acción.
+        # Si el admin de la sucursal 2 paga, el gasto DEBE quedar en la sucursal 2.
+        try:
+            if current_user.id_empresa:
+                id_empresa_pago = int(current_user.id_empresa)
+            elif rep_data and rep_data['id_empresa']:
+                id_empresa_pago = int(rep_data['id_empresa'])
+            else:
+                id_empresa_pago = int(DEFAULT_COMPANY_FOR_ORDERS)
+        except:
+            id_empresa_pago = int(DEFAULT_COMPANY_FOR_ORDERS)
+        
+        # 2. OBTENEMOS LA TARIFA DE PAGO
+        pago_por_viaje = get_pago_repartidor(id_empresa_pago)
+        total_monto = float(len(ids_pedidos) * pago_por_viaje)
+        fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # 3. Marcar los pedidos como PAGADOS
+        placeholders = ','.join(['?' for _ in ids_pedidos])
+        query_update = f"UPDATE pedidos SET pago_repartidor_status = 'Pagado' WHERE id_pedido IN ({placeholders})"
+        cursor.execute(query_update, ids_pedidos)
+
+        # 4. Registrar el EGRESO en la caja
+        descripcion_pago = f"Liquidación de {len(ids_pedidos)} viajes a {nombre_rep}"
+        
+        cursor.execute("""
+            INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_repartidor_origen, id_empresa) 
+            VALUES ('Egreso', ?, ?, ?, ?, ?)
+        """, (total_monto, descripcion_pago, fecha_hoy, id_r, id_empresa_pago))
+        
+        conn.commit()
+        
+        # DEBUG PARA TERMINAL: Muy útil para ver si el ID de empresa es el correcto
+        print(f"DEBUG PAGO: Usuario {current_user.email} | Empresa de Caja: {id_empresa_pago} | Monto: ${total_monto}")
+        
+        flash(f"Pago de ${total_monto} registrado para {nombre_rep}. Se descontó de la caja de la sucursal.", "success")
+        
+    except Exception as e:
+        conn.rollback()
+        print(f"ERROR EN PROCESAR PAGO: {e}")
+        flash(f"Error crítico al procesar el pago: {e}", "danger")
+    finally:
+        conn.close()
+    
+    return redirect(url_for('reporte_repartidores'))
+
+
+
+@app.route('/gestion/pagar_repartidor', methods=['POST'])
+@login_required
+def pagar_repartidor():
+    id_r = request.form.get('id_repartidor')
+    monto = float(request.form.get('monto'))
+    fi = request.form.get('fecha_inicio')
+    ff = request.form.get('fecha_fin')
+    nombre_rep = request.form.get('nombre_repartidor')
+    
+    conn = conectar_db(); cursor = conn.cursor()
+    fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # 1. Registramos el EGRESO en la caja
+    cursor.execute("""
+        INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_repartidor_origen, id_empresa) 
+        VALUES ('Egreso', ?, ?, ?, ?, ?)
+    """, (monto, f"Pago de viajes a {nombre_rep} (Periodo: {fi} a {ff})", fecha_hoy, id_r, current_user.id_empresa))
+    
+    conn.commit(); conn.close()
+    
+    flash(f"Se ha registrado el pago de ${monto} a {nombre_rep}. El monto se descontó de la caja.", "success")
+    return redirect(url_for('reporte_repartidores'))
+
+
+    
+@app.route('/gestion/reportes/ventas', methods=['GET', 'POST'])
+@login_required
+def reportes_ventas():
+    start = request.form.get('fecha_inicio', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
+    end = request.form.get('fecha_fin', datetime.now().strftime('%Y-%m-%d'))
+    sid = request.form.get('id_empresa_reporte'); reportes = None
+    if request.method == 'POST':
+        reportes = _fetch_report_data(start, end, sid)
+    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("SELECT id_empresa, nombre FROM empresas"); emps = cursor.fetchall(); conn.close()
+    return render_template('reportes_ventas.html', start_date=start, end_date=end, reportes=reportes, empresas_disponibles=emps, selected_company_id=sid)
+
+@app.route('/gestion/caja', methods=['GET', 'POST'])
+@login_required
+def arqueo_caja():
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    if request.method == 'POST':
+        # CASO A: Registrar un egreso manual
+        if 'registrar_egreso' in request.form:
+            monto = float(request.form.get('monto', 0))
+            desc = request.form.get('descripcion')
+            fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            cursor.execute("""
+                INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_empresa) 
+                VALUES ('Egreso', ?, ?, ?, ?)
+            """, (monto, desc, fecha, current_user.id_empresa))
+            conn.commit()
+            flash("Egreso registrado correctamente.", "success")
+            return redirect(url_for('arqueo_caja'))
+        
+          # --- NUEVO CASO C: Registrar un INGRESO manual (Apertura de caja) ---
+        elif 'registrar_ingreso' in request.form:
+            monto = float(request.form.get('monto', 0))
+            desc = request.form.get('descripcion') # Ej: "Apertura de caja" o "Refuerzo"
+            fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute("""
+                INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_empresa) 
+                VALUES ('Ingreso', ?, ?, ?, ?)
+            """, (monto, desc, fecha, current_user.id_empresa))
+            conn.commit()
+            flash("Ingreso manual registrado correctamente.", "success")
+            return redirect(url_for('arqueo_caja'))
+        # -------------------------------------------------------------------
+
+        # CASO B: Realizar el arqueo (búsqueda)
+     
+        elif 'realizar_arqueo' in request.form:
+            fi = request.form.get('fecha_inicio') + " 00:00:00"
+            ff = request.form.get('fecha_fin') + " 23:59:59"
+            
+            # --- CONSULTA ACTUALIZADA CON JOIN PARA TRAER DATOS DEL CLIENTE ---
+            query = """
+                        SELECT ie.*, p.cliente_nombre, p.cliente_apellido, p.forma_pago, r.nombre as rep_nombre
+                        FROM ingresos_egresos ie
+                        LEFT JOIN pedidos p ON ie.id_pedido_origen = p.id_pedido
+                        LEFT JOIN repartidores r ON ie.id_repartidor_origen = r.id_repartidor -- <--- ESTO ES CLAVE
+                        WHERE ie.fecha_hora BETWEEN ? AND ?
+                    """
+            params = [fi, ff]
+            
+            if not current_user.has_role('super_admin'):
+                # Usamos ie.id_empresa para evitar ambigüedad con la tabla pedidos
+                query += " AND ie.id_empresa = ?"
+                params.append(current_user.id_empresa)
+                
+            cursor.execute(query, params)
+            movs = [dict(m) for m in cursor.fetchall()]
+            
+            ingresos = sum(m['monto'] for m in movs if m['tipo'] == 'Ingreso')
+            egresos = sum(m['monto'] for m in movs if m['tipo'] != 'Ingreso')
+            
+            # GUARDAMOS TODO, INCLUYENDO EL BALANCE Y LOS NUEVOS CAMPOS
+            session['arqueo_resultados'] = {
+                'movimientos': movs, 
+                'total_ingresos': ingresos, 
+                'total_egresos': egresos,
+                'balance': ingresos - egresos
+            }
+            return redirect(url_for('arqueo_caja'))
+
+    conn.close()
+    res = session.pop('arqueo_resultados', None)
+    return render_template('arqueo_caja.html', arqueo_resultados=res, now=datetime.now())
+
+
+
+@app.route('/gestion/configuracion', methods=['GET', 'POST']) 
+@login_required
+def gestion_configuracion():
+    # Determinamos de qué empresa estamos viendo/editando la configuración
+    eid = current_user.id_empresa if not current_user.has_role('super_admin') else request.form.get('config_for_company')
+    if not eid: eid = DEFAULT_COMPANY_FOR_ORDERS
+
+    if request.method == 'POST':
+        # Guardar costo de envío
+        if 'costo_envio' in request.form: 
+            guardar_configuracion('ENVIO_COSTO', request.form['costo_envio'], eid)
+        
+        # GUARDAR PAGO REPARTIDOR
+        if 'pago_repartidor' in request.form:
+            guardar_configuracion('PAGO_REPARTIDOR', request.form['pago_repartidor'], eid)
+            
+        # --- Guardar el Alias ---
+        if 'transferencia_alias' in request.form:
+            guardar_configuracion('TRANSFERENCIA_ALIAS', request.form['transferencia_alias'], eid)
+        # ------------------------------------------------
+            
+        # Si el cambio fue solo por el selector de empresa del Super Admin (sin datos de ahorro), 
+        # evitamos el redirect para que la página cargue los nuevos valores de esa empresa.
+        if not any(k in request.form for k in ['costo_envio', 'pago_repartidor', 'transferencia_alias']):
+            pass
+        else:
+            flash("Configuración actualizada correctamente.", "success")
+            return redirect(url_for('gestion_configuracion'))
+
+    # Para el selector de empresas (solo Super Admin)
+    empresas = []
+    if current_user.has_role('super_admin'):
+        conn = conectar_db(); cursor = conn.cursor()
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas = cursor.fetchall(); conn.close()
+
+    return render_template('gestion_configuracion.html', 
+                           costo_envio_actual=get_costo_envio(eid), 
+                           pago_repartidor_actual=get_pago_repartidor(eid),
+                           id_empresa_actual=eid, # <--- LÍNEA CLAVE PARA QUE EL HTML FUNCIONE
+                           empresas_para_config=empresas)
+    
+    
+       
+@app.route('/gestion/usuarios')
+@login_required
+def gestion_usuarios():
+    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("SELECT u.*, r.nombre_rol, e.nombre as empresa_n FROM usuarios u JOIN roles r ON u.id_rol = r.id_rol LEFT JOIN empresas e ON u.id_empresa = e.id_empresa"); usrs = cursor.fetchall(); conn.close()
+    return render_template('gestion_usuarios.html', usuarios=usrs)
+
+@app.route('/gestion/usuarios/agregar', methods=['GET', 'POST'])
+@login_required
+def agregar_usuario():
+    # Seguridad: Solo el super_admin puede crear usuarios
+    if not current_user.has_role('super_admin'):
+        flash("No tienes permiso para realizar esta acción.", "danger")
+        return redirect(url_for('index'))
+
+    # Abrimos la conexión al inicio
+    conn = conectar_db()
+    cursor = conn.cursor()
+    request_form = {}
+
+    if request.method == 'POST':
+        request_form = request.form
+        email = request.form.get('email')
+        password = request.form.get('password_inicial')
+        nombre = request.form.get('nombre')
+        apellido = request.form.get('apellido')
+        id_rol = request.form.get('id_rol')
+        id_empresa = request.form.get('id_empresa')
+        # Dentro de agregar_usuario en el bloque POST:
+        telefono = request.form.get('telefono') 
+        
+        # NUEVO: Capturar el ID del repartidor vinculado
+        id_rep_vinculado = request.form.get('id_repartidor_vinculado')
+        
+        # Limpiar valores vacíos
+        if not id_empresa or id_empresa == "": id_empresa = None
+        if not id_rep_vinculado or id_rep_vinculado == "": id_rep_vinculado = None
+
+        try:
+            hp = generate_password_hash(password, method='pbkdf2:sha256')
+            # Incluimos id_repartidor_vinculado en el INSERT
+            cursor.execute("""
+                INSERT INTO usuarios (email, password, nombre, apellido, id_rol, id_empresa, activo, primer_login_requerido, id_repartidor_vinculado, telefono) 
+            VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+            """, (email, hp, nombre, apellido, id_rol, id_empresa, id_rep_vinculado, telefono))
+            
+            conn.commit()
+            conn.close() # Cerramos solo si tuvo éxito y vamos a redirigir
+            flash("Usuario creado con éxito.", "success")
+            return redirect(url_for('gestion_usuarios'))
+            
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            flash("Error: El email ya está registrado.", "danger")
+        except Exception as e:
+            conn.rollback()
+            flash(f"Error al guardar: {e}", "danger")
+        # Si hubo un error, NO cerramos la conexión aquí para que el código de abajo pueda usarla
+
+    # --- LÓGICA PARA CARGAR EL FORMULARIO ---
+    # Si la conexión se cerró por error o éxito accidental, la reabrimos
+    try:
+        cursor.execute("SELECT * FROM roles")
+        roles_db = cursor.fetchall()
+        
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas_db = cursor.fetchall()
+        
+        # NUEVO: Traer repartidores activos para el selector
+        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        repartidores_db = cursor.fetchall()
+        
+    except sqlite3.ProgrammingError:
+        conn = conectar_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM roles")
+        roles_db = cursor.fetchall()
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas_db = cursor.fetchall()
+        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        repartidores_db = cursor.fetchall()
+
+    conn.close() # Cerramos al final de todo el proceso de carga de datos
+
+    return render_template('agregar_usuario.html', 
+                           roles=roles_db, 
+                           empresas=empresas_db, 
+                           repartidores=repartidores_db, # Enviamos la lista al HTML
+                           request_form=request_form)
+    
 @app.route('/gestion/empresas')
 @login_required
 def gestion_empresas():
+    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("SELECT * FROM empresas"); emps = cursor.fetchall(); conn.close()
+    return render_template('gestion_empresas.html', empresas=emps)
+
+ #--- RUTA EDITAR EMPRESA (Actualizada para recibir múltiples turnos) ---
+@app.route('/gestion/empresas/editar/<int:id_empresa>', methods=['GET', 'POST'])
+@login_required
+def edita_empresa(id_empresa):
+    if not current_user.has_role('super_admin'): abort(403)
+    conn = conectar_db(); cursor = conn.cursor()
+    request_form = {} # <-- Se inicializa vacío aquí
+    
+    if request.method == 'POST':
+        request_form = request.form
+        # ... (tus capturas de nombre, calle, altura, etc. se mantienen igual) ...
+        nombre = request.form.get('nombre')
+        telefono = request.form.get('telefono')
+        # Captura de dirección... (omito el código repetitivo por brevedad, mantenlo igual)
+        activo = 1 if 'activo' in request.form else 0
+
+        # NUEVA LÓGICA: Procesar múltiples turnos por día
+        nuevos_horarios = {}
+        for i in range(7):
+            esta_abierto_dia = request.form.get(f'abierto_{i}') == 'on'
+            # Capturamos las listas de inicios y fines para ese día
+            inicios = request.form.getlist(f'inicio_{i}[]')
+            fines = request.form.getlist(f'fin_{i}[]')
+            
+            turnos_dia = []
+            for h_in, h_fi in zip(inicios, fines):
+                if h_in and h_fi:
+                    turnos_dia.append({'inicio': h_in, 'fin': h_fi})
+            
+            nuevos_horarios[str(i)] = {
+                'abierto': esta_abierto_dia,
+                'turnos': turnos_dia
+            }
+        
+        horarios_json = json.dumps(nuevos_horarios)
+
+        cursor.execute("UPDATE empresas SET nombre=?, telefono=?, activo=?, horarios_json=? WHERE id_empresa=?", 
+                       (nombre, telefono, activo, horarios_json, id_empresa))
+        conn.commit(); conn.close()
+        flash("Empresa y horarios actualizados.", "success")
+        return redirect(url_for('gestion_empresas'))
+
+    cursor.execute("SELECT * FROM empresas WHERE id_empresa = ?", (id_empresa,))
+    empresa = cursor.fetchone()
+    
+    # Normalizar formato para la vista (por si hay datos viejos)
+    try:
+        h_data = json.loads(empresa['horarios_json']) if empresa['horarios_json'] else {}
+    except: h_data = {}
+    
+    # Aseguramos que cada día tenga al menos la estructura de 'turnos'
+    for i in range(7):
+        if str(i) not in h_data: h_data[str(i)] = {'abierto': False, 'turnos': []}
+        if 'turnos' not in h_data[str(i)]:
+            # Migración al vuelo: si tenía el formato anterior, lo metemos en la lista de turnos
+            if 'inicio' in h_data[str(i)]:
+                h_data[str(i)]['turnos'] = [{'inicio': h_data[str(i)]['inicio'], 'fin': h_data[str(i)]['fin']}]
+    
+    conn.close()
+    return render_template('editar_empresa.html', 
+                           empresa=empresa, 
+                           horarios=h_data, 
+                           dias=DIAS_SEMANA,
+                           request_form=request_form) # <--- AGREGA ESTA LÍNEA AQUÍ
+    
+
+@app.route('/gestion/empresas/eliminar/<int:id_empresa>', methods=['POST'])
+@login_required
+def eliminar_empresa(id_empresa):
+    # Seguridad: Solo el super_admin puede inactivar empresas
     if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para acceder a esta página.", "danger")
+        flash("No tienes permiso para realizar esta acción.", "danger")
         return redirect(url_for('index'))
 
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id_empresa, nombre, telefono, direccion, activo FROM empresas ORDER BY nombre")
-    empresas = cursor.fetchall()
-    conn.close()
-    return render_template('gestion_empresas.html', empresas=empresas)
+    try:
+        conn = conectar_db()
+        cursor = conn.cursor()
+        
+        # Realizamos un "borrado lógico" (ponemos activo = 0)
+        # Esto es mejor que borrar el registro para no perder el historial de pedidos
+        cursor.execute("UPDATE empresas SET activo = 0 WHERE id_empresa = ?", (id_empresa,))
+        
+        # También inactivamos a los usuarios que pertenecen a esa empresa
+        cursor.execute("UPDATE usuarios SET activo = 0 WHERE id_empresa = ?", (id_empresa,))
+        
+        conn.commit()
+        conn.close()
+        
+        flash("Empresa y usuarios asociados han sido inactivados correctamente.", "success")
+    except Exception as e:
+        flash(f"Error al intentar inactivar la empresa: {e}", "danger")
+
+    return redirect(url_for('gestion_empresas'))
+
 
 @app.route('/gestion/empresas/agregar', methods=['GET', 'POST'])
 @login_required
 def agregar_empresa():
     if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_empresas'))
+        abort(403)
 
+    request_form = {}
     if request.method == 'POST':
-        nombre = request.form['nombre'].strip()
-        telefono = request.form['telefono'].strip()
-        direccion = request.form['direccion'].strip()
+        request_form = request.form
+        nombre = request.form.get('nombre')
+        telefono = request.form.get('telefono')
+        calle = request.form.get('calle')
+        altura = request.form.get('altura')
+        localidad = request.form.get('localidad')
+        provincia = request.form.get('provincia')
 
-        if not nombre:
-            flash("El nombre de la empresa es obligatorio.", "danger")
-            return render_template('agregar_empresa.html', request_form=request.form.to_dict())
+        # Concatenamos para el campo 'direccion' general
+        direccion_completa = f"{calle} {altura}, {localidad}, {provincia}"
 
-        conn = conectar_db()
-        cursor = conn.cursor()
         try:
-            cursor.execute("INSERT INTO empresas (nombre, telefono, direccion, activo) VALUES (?, ?, ?, 1)",
-                           (nombre, telefono, direccion))
-            conn.commit()
-            flash(f"Empresa '{nombre}' agregada con éxito.", "success")
-        except sqlite3.IntegrityError:
-            flash(f"Ya existe una empresa con el nombre '{nombre}'.", "danger")
-            return render_template('agregar_empresa.html', request_form=request.form.to_dict())
-        except sqlite3.Error as e:
-            flash(f"Error al agregar empresa: {e}", "danger")
-            return render_template('agregar_empresa.html', request_form=request.form.to_dict())
-        finally:
-            conn.close()
-        return redirect(url_for('gestion_empresas'))
-    return render_template('agregar_empresa.html', request_form={})
-
-@app.route('/gestion/empresas/editar/<int:id_empresa>', methods=['GET', 'POST'])
-@login_required
-def edita_empresa(id_empresa):
-    if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_empresas'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id_empresa, nombre, telefono, direccion, activo FROM empresas WHERE id_empresa = ?", (id_empresa,))
-    empresa = cursor.fetchone()
-    conn.close()
-
-    if not empresa:
-        flash("Empresa no encontrada.", "danger")
-        return redirect(url_for('gestion_empresas'))
-
-    if request.method == 'POST':
-        nombre = request.form['nombre'].strip()
-        telefono = request.form['telefono'].strip()
-        direccion = request.form['direccion'].strip()
-        activo = 1 if 'activo' in request.form else 0
-
-        if not nombre:
-            flash("El nombre de la empresa es obligatorio.", "danger")
-            return render_template('editar_empresa.html', empresa=empresa, request_form=request.form.to_dict())
-
-        conn = conectar_db()
-        cursor = conn.cursor()
-        try:
-            cursor.execute("UPDATE empresas SET nombre = ?, telefono = ?, direccion = ?, activo = ? WHERE id_empresa = ?",
-                           (nombre, telefono, direccion, activo, id_empresa))
-            conn.commit()
-            flash(f"Empresa '{nombre}' actualizada con éxito.", "success")
-        except sqlite3.IntegrityError:
-            flash(f"Ya existe una empresa con el nombre '{nombre}'.", "danger")
-            return render_template('editar_empresa.html', empresa=empresa, request_form=request.form.to_dict())
-        except sqlite3.Error as e:
-            flash(f"Error al editar empresa: {e}", "danger")
-            return render_template('editar_empresa.html', empresa=empresa, request_form=request.form.to_dict())
-        finally:
-            conn.close()
-        return redirect(url_for('gestion_empresas'))
-
-    return render_template('editar_empresa.html', empresa=empresa, request_form=empresa)
-
-@app.route('/gestion/empresas/eliminar/<int:id_empresa>', methods=['POST'])
-@login_required
-def eliminar_empresa(id_empresa):
-    if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_empresas'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("UPDATE empresas SET activo = 0 WHERE id_empresa = ?", (id_empresa,))
-        cursor.execute("UPDATE usuarios SET activo = 0 WHERE id_empresa = ?", (id_empresa,))
-
-        conn.commit()
-        flash(f"Empresa con ID {id_empresa} marcada como inactiva y sus usuarios asociados inactivados.", "success")
-    except sqlite3.Error as e:
-        conn.rollback()
-        flash(f"Error al inactivar empresa: {e}", "danger")
-    finally:
-        conn.close()
-    return redirect(url_for('gestion_empresas'))
-
-
-@app.route('/gestion/usuarios')
-@login_required
-def gestion_usuarios():
-    if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('index'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT u.id_usuario, u.email, u.nombre, u.apellido, u.activo, u.primer_login_requerido,
-               r.nombre_rol, e.nombre AS nombre_empresa
-        FROM usuarios u
-        JOIN roles r ON u.id_rol = r.id_rol
-        LEFT JOIN empresas e ON u.id_empresa = e.id_empresa
-        ORDER BY u.apellido, u.nombre
-    """)
-    usuarios = cursor.fetchall()
-    conn.close()
-    return render_template('gestion_usuarios.html', usuarios=usuarios)
-
-
-@app.route('/gestion/usuarios/agregar', methods=['GET', 'POST'])
-@login_required
-def agregar_usuario():
-    if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_usuarios'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id_rol, nombre_rol FROM roles ORDER BY nombre_rol")
-    roles = cursor.fetchall()
-    cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1 ORDER BY nombre")
-    empresas = cursor.fetchall()
-    conn.close()
-
-    if request.method == 'POST':
-        email = request.form['email'].strip()
-        nombre = request.form['nombre'].strip()
-        apellido = request.form['apellido'].strip()
-        id_rol = request.form['id_rol']
-        id_empresa = request.form.get('id_empresa')
-        password_inicial = request.form['password_inicial']
-        primer_login_requerido = 1 if 'primer_login_requerido' in request.form else 0
-
-        if not all([email, nombre, apellido, id_rol, password_inicial]):
-            flash("Todos los campos obligatorios deben ser completados.", "danger")
-            return render_template('agregar_usuario.html', roles=roles, empresas=empresas, request_form=request.form)
-
-        if id_empresa == '':
-            id_empresa = None
-        else:
-            id_empresa = int(id_empresa)
-
-        conn = conectar_db()
-        cursor = conn.cursor()
-        try:
-            hashed_password = generate_password_hash(password_inicial, method='pbkdf2:sha256')
+            conn = conectar_db(); cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO usuarios (email, password, nombre, apellido, id_rol, id_empresa, activo, primer_login_requerido)
-                VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-            """, (email, hashed_password, nombre, apellido, id_rol, id_empresa, primer_login_requerido))
-            conn.commit()
-            flash(f"Usuario '{email}' agregado con éxito. Contraseña inicial: {password_inicial}", "success")
-        except sqlite3.IntegrityError:
-            flash(f"Ya existe un usuario con el email '{email}'.", "danger")
-            return render_template('agregar_usuario.html', roles=roles, empresas=empresas, request_form=request.form)
-        except sqlite3.Error as e:
-            flash(f"Error al agregar usuario: {e}", "danger")
-            return render_template('agregar_usuario.html', roles=roles, empresas=empresas, request_form=request.form)
-        finally:
-            conn.close()
-        return redirect(url_for('gestion_usuarios'))
+                INSERT INTO empresas (nombre, telefono, direccion, calle, altura, localidad, provincia, activo) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+            """, (nombre, telefono, direccion_completa, calle, altura, localidad, provincia))
+            conn.commit(); conn.close()
+            flash("Empresa agregada con éxito.", "success")
+            return redirect(url_for('gestion_empresas'))
+        except Exception as e:
+            flash(f"Error: {e}", "danger")
 
-    return render_template('agregar_usuario.html', roles=roles, empresas=empresas, request_form={})
+    return render_template('agregar_empresa.html', request_form=request_form)
+
 
 @app.route('/gestion/usuarios/editar/<int:id_usuario>', methods=['GET', 'POST'])
 @login_required
 def editar_usuario(id_usuario):
     if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para acceder a esta página.", "danger")
-        return redirect(url_for('gestion_usuarios'))
+        flash("No tienes permiso para editar usuarios.", "danger")
+        return redirect(url_for('index'))
 
+    # Abrimos la conexión al principio
     conn = conectar_db()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT u.id_usuario, u.email, u.nombre, u.apellido, u.activo, u.primer_login_requerido,
-               u.id_rol, u.id_empresa
-        FROM usuarios u
-        WHERE u.id_usuario = ?
-    """, (id_usuario,))
-    usuario = cursor.fetchone()
-
-    if not usuario:
-        flash("Usuario no encontrado.", "danger")
-        conn.close()
-        return redirect(url_for('gestion_usuarios'))
-
-    cursor.execute("SELECT id_rol, nombre_rol FROM roles ORDER BY nombre_rol")
-    roles = cursor.fetchall()
-    cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1 ORDER BY nombre")
-    empresas = cursor.fetchall()
-    conn.close()
 
     if request.method == 'POST':
-        email = request.form['email'].strip()
-        nombre = request.form['nombre'].strip()
-        apellido = request.form['apellido'].strip()
-        id_rol = request.form['id_rol']
+        nombre = request.form.get('nombre')
+        apellido = request.form.get('apellido')
+        email = request.form.get('email')
+        id_rol = request.form.get('id_rol')
         id_empresa = request.form.get('id_empresa')
+        id_rep_vinculado = request.form.get('id_repartidor_vinculado')
+        telefono = request.form.get('telefono')
+        # Limpiar el valor si no se seleccionó ninguno
+        if not id_rep_vinculado or id_rep_vinculado == "":
+            id_rep_vinculado = None
+            
         activo = 1 if 'activo' in request.form else 0
-        primer_login_requerido = 1 if 'primer_login_requerido' in request.form else 0
-        nueva_password = request.form.get('nueva_password', '').strip()
+        nueva_password = request.form.get('password')
 
-        if not all([email, nombre, apellido, id_rol]):
-            flash("Todos los campos obligatorios deben ser completados.", "danger")
-            return render_template('editar_usuario.html', usuario=usuario, roles=roles, empresas=empresas, request_form=request.form)
+        try:
+            cursor.execute("""
+                UPDATE usuarios 
+                SET nombre=?, apellido=?, email=?, id_rol=?, id_empresa=?, activo=?, id_repartidor_vinculado=?,telefono=?
+                WHERE id_usuario=?
+            """, (nombre, apellido, email, id_rol, id_empresa, activo, id_rep_vinculado, telefono, id_usuario))
 
-        if id_empresa == '':
-            id_empresa = None
-        else:
-            id_empresa = int(id_empresa)
+            if nueva_password and nueva_password.strip() != "":
+                hp = generate_password_hash(nueva_password, method='pbkdf2:sha256')
+                cursor.execute("UPDATE usuarios SET password=? WHERE id_usuario=?", (hp, id_usuario))
 
+            conn.commit()
+            conn.close() # Cerramos solo si el proceso fue exitoso antes del redirect
+            flash("Usuario actualizado con éxito.", "success")
+            return redirect(url_for('gestion_usuarios'))
+            
+        except Exception as e:
+            conn.rollback() # Si hay error, volvemos atrás
+            flash(f"Error al actualizar: {e}", "danger")
+            # NO cerramos la conexión aquí porque el código sigue abajo para cargar el HTML
+
+    # --- LÓGICA PARA CARGAR EL FORMULARIO (GET o si el POST falló) ---
+    # Si llegamos aquí y la conexión está cerrada (por un error previo), la reabrimos
+    try:
+        cursor.execute("SELECT * FROM usuarios WHERE id_usuario = ?", (id_usuario,))
+        usuario = cursor.fetchone()
+        
+        cursor.execute("SELECT * FROM roles")
+        roles = cursor.fetchall()
+        
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas = cursor.fetchall()
+
+        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        repartidores_lista = cursor.fetchall()
+    except sqlite3.ProgrammingError:
+        # Esto previene el error de "Closed Database" si el flujo falló antes
         conn = conectar_db()
         cursor = conn.cursor()
-        try:
-            update_query = """
-                UPDATE usuarios SET email = ?, nombre = ?, apellido = ?, id_rol = ?,
-                id_empresa = ?, activo = ?, primer_login_requerido = ?
-            """
-            update_params = [email, nombre, apellido, id_rol, id_empresa, activo, primer_login_requerido]
+        # Repetimos las consultas
+        cursor.execute("SELECT * FROM usuarios WHERE id_usuario = ?", (id_usuario,))
+        usuario = cursor.fetchone()
+        cursor.execute("SELECT * FROM roles")
+        roles = cursor.fetchall()
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas = cursor.fetchall()
+        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        repartidores_lista = cursor.fetchall()
 
-            if nueva_password:
-                hashed_password = generate_password_hash(nueva_password, method='pbkdf2:sha256')
-                update_query += ", password = ?"
-                update_params.append(hashed_password)
-                flash("Contraseña actualizada.", "info")
-
-            update_query += " WHERE id_usuario = ?"
-            update_params.append(id_usuario)
-
-            cursor.execute(update_query, tuple(update_params))
-            conn.commit()
-            flash(f"Usuario '{email}' actualizado con éxito.", "success")
-        except sqlite3.IntegrityError:
-            flash(f"Ya existe un usuario con el email '{email}'.", "danger")
-            return render_template('editar_usuario.html', usuario=usuario, roles=roles, empresas=empresas, request_form=request.form)
-        except sqlite3.Error as e:
-            flash(f"Error al actualizar usuario: {e}", "danger")
-            return render_template('editar_usuario.html', usuario=usuario, roles=roles, empresas=empresas, request_form=request.form)
-        finally:
-            conn.close()
+    conn.close() # Cerramos siempre al final de la función
+    
+    if not usuario:
+        flash("Usuario no encontrado.", "warning")
         return redirect(url_for('gestion_usuarios'))
 
-    return render_template('editar_usuario.html', usuario=usuario, roles=roles, empresas=empresas, request_form=usuario)
-
+    return render_template('editar_usuario.html', 
+                           usuario=usuario, 
+                           roles=roles, 
+                           empresas=empresas, 
+                           repartidores=repartidores_lista)
+        
+    
 @app.route('/gestion/usuarios/eliminar/<int:id_usuario>', methods=['POST'])
 @login_required
 def eliminar_usuario(id_usuario):
     if not current_user.has_role('super_admin'):
-        flash("No tienes permiso para realizar esta acción.", "danger")
-        return redirect(url_for('gestion_usuarios'))
-
-    if id_usuario == current_user.id:
-        flash("No puedes eliminar tu propio usuario mientras estás conectado.", "danger")
-        return redirect(url_for('gestion_usuarios'))
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-    try:
-        cursor.execute("UPDATE usuarios SET activo = 0 WHERE id_usuario = ?", (id_usuario,))
-        conn.commit()
-        flash(f"Usuario con ID {id_usuario} marcado como inactivo.", "success")
-    except sqlite3.Error as e:
-        flash(f"Error al inactivar usuario: {e}", "danger")
-    finally:
-        conn.close()
-    return redirect(url_for('gestion_usuarios'))
-
-
-# --- FUNCIONES PARA REPORTES DE VENTAS ---
-
-def _get_company_id_for_report(selected_company_id_str):
-    """Determina el ID de la empresa para filtrar los reportes."""
-    if current_user.has_role('super_admin'):
-        if selected_company_id_str and selected_company_id_str != 'all':
-            return int(selected_company_id_str)
-        return None # Para super_admin, None significa todas las empresas
-    return current_user.id_empresa # Para admin_empresa, siempre su propia empresa
-
-def _fetch_report_data(start_date_str, end_date_str, company_id):
-    """
-    Función central para ejecutar todas las consultas de reportes.
-    Retorna un diccionario con todos los datos.
-    """
-    report_data = {
-        'top_selling_by_rubro': [],
-        'top_selling_overall': [],
-        'most_used_payment_methods': [],
-        'total_quantity_per_product_overall': [] 
-    }
-
-    if not start_date_str or not end_date_str:
-        return report_data
-
-    try:
-        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').replace(hour=0, minute=0, second=0)
-        end_date = datetime.strptime(end_date_str, '%Y-%m-%d').replace(hour=23, minute=59, second=59)
-    except ValueError:
-        current_app.logger.error(f"Error de formato de fecha en reporte: {start_date_str} - {end_date_str}")
-        return report_data
-
-    conn = conectar_db()
-    cursor = conn.cursor()
-
-    params_base_dates = [start_date.strftime('%Y-%m-%d %H:%M:%S'), end_date.strftime('%Y-%m-%d %H:%M:%S')]
-    
-    # Obtener condiciones de filtro de empresa una sola vez para 'pedidos' (p)
-    company_conditions_p, company_params_p = get_company_filter_conditions_and_params(table_alias='p')
-
-    # Combinar condiciones base de fecha con las de empresa
-    base_where_conditions = ["p.fecha_creacion BETWEEN ? AND ?"] + company_conditions_p
-    base_query_params = params_base_dates + company_params_p
-
-
-    # 1. Productos más vendidos por rubro (SUMADO por rubro)
-    query_by_rubro = f"""
-        SELECT pl.rubro, SUM(ip.cantidad) AS total_cantidad_vendida
-        FROM items_pedido ip
-        JOIN platos pl ON ip.id_plato = pl.id_plato
-        JOIN pedidos p ON ip.id_pedido = p.id_pedido
-        WHERE {' AND '.join(base_where_conditions)}
-        GROUP BY pl.rubro
-        ORDER BY total_cantidad_vendida DESC
-    """
-    cursor.execute(query_by_rubro, base_query_params)
-    report_data['top_selling_by_rubro'] = cursor.fetchall()
-
-    # 2. Productos más vendidos en total (general) / Cantidad total vendida de cada producto
-    query_overall_products = f"""
-        SELECT pl.nombre, pl.rubro, SUM(ip.cantidad) AS total_cantidad_vendida
-        FROM items_pedido ip
-        JOIN platos pl ON ip.id_plato = pl.id_plato
-        JOIN pedidos p ON ip.id_pedido = p.id_pedido
-        WHERE {' AND '.join(base_where_conditions)}
-        GROUP BY pl.id_plato, pl.nombre, pl.rubro
-        ORDER BY total_cantidad_vendida DESC
-    """
-    cursor.execute(query_overall_products, base_query_params)
-    report_data['top_selling_overall'] = cursor.fetchall()
-    report_data['total_quantity_per_product_overall'] = report_data['top_selling_overall'] # Reutiliza los datos
-
-    # 3. Medios de pago más usados
-    query_payment_methods = f"""
-        SELECT forma_pago, COUNT(*) AS total_usos, SUM(costo_total) AS total_monto
-        FROM pedidos p
-        WHERE {' AND '.join(base_where_conditions)}
-        GROUP BY forma_pago
-        ORDER BY total_usos DESC
-    """
-    cursor.execute(query_payment_methods, base_query_params)
-    report_data['most_used_payment_methods'] = cursor.fetchall()
-
-    conn.close()
-    return report_data
-
-@app.route('/gestion/reportes/ventas', methods=['GET', 'POST'])
-@login_required
-def reportes_ventas():
-    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
-        flash("No tienes permiso para acceder a esta página de reportes.", "danger")
+        flash("No autorizado.", "danger")
         return redirect(url_for('index'))
 
-    start_date = request.form.get('fecha_inicio', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
-    end_date = request.form.get('fecha_fin', datetime.now().strftime('%Y-%m-%d'))
+    conn = conectar_db(); cursor = conn.cursor()
+    # Inactivación en lugar de borrado físico
+    cursor.execute("UPDATE usuarios SET activo = 0 WHERE id_usuario = ?", (id_usuario,))
+    conn.commit(); conn.close()
+    flash("Usuario inactivado.", "info")
+    return redirect(url_for('gestion_usuarios'))    
+
+
+
+@app.route('/gestion/catalogo/agregar', methods=['GET', 'POST'])
+@login_required
+def agregar_plato():
+    # 1. Inicializamos request_form vacío para que el HTML no de error en el GET
+    request_form = {}
     
-    empresas_disponibles = []
-    selected_company_id = None
-    selected_company_id_str = request.form.get('id_empresa_reporte')
-
-    if current_user.has_role('super_admin'):
-        conn = conectar_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1 ORDER BY nombre")
-        empresas_disponibles = cursor.fetchall()
-        conn.close()
-        
-        if selected_company_id_str and selected_company_id_str != 'all':
-            try:
-                selected_company_id = int(selected_company_id_str)
-            except ValueError:
-                flash("ID de empresa seleccionada inválida.", "danger")
-                selected_company_id = None 
-        elif selected_company_id_str == 'all':
-            selected_company_id = None 
-        else:
-            selected_company_id = None 
-    else: 
-        selected_company_id = current_user.id_empresa
-        selected_company_id_str = str(current_user.id_empresa)
-
-
-    reportes_generados = None
     if request.method == 'POST':
-        if not start_date or not end_date:
-            flash("Debe seleccionar ambas fechas (inicio y fin) para generar el reporte.", "danger")
+        # 2. Si es POST, capturamos los datos del formulario
+        request_form = request.form
+        
+        nombre = request.form.get('nombre')
+        descripcion = request.form.get('descripcion')
+        precio = request.form.get('precio')
+        rubro = request.form.get('rubro')
+        
+        # Determinar la empresa
+        if current_user.has_role('super_admin'):
+            id_empresa = request.form.get('id_empresa')
         else:
+            id_empresa = current_user.id_empresa
+
+        if not nombre or not precio:
+            flash("Nombre y Precio son obligatorios.", "danger")
+        else:
+            # --- NUEVO: LÓGICA DE PROCESAMIENTO DE IMAGEN ---
+            nombre_imagen = None
+            if 'imagen' in request.files:
+                file = request.files['imagen']
+                if file and file.filename != '' and allowed_file(file.filename):
+                    filename = secure_filename(file.filename)
+                    # Añadimos un timestamp para que el nombre sea único y no se sobrescriba
+                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    filename = f"{timestamp}_{filename}"
+                    file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                    nombre_imagen = filename
+            # ------------------------------------------------
+
             try:
-                datetime.strptime(start_date, '%Y-%m-%d')
-                datetime.strptime(end_date, '%Y-%m-%d')
-
-                reportes_generados = _fetch_report_data(start_date, end_date, selected_company_id)
-                if not any(reportes_generados.values()):
-                    flash("No se encontraron datos para el período y empresa seleccionados.", "info")
-            except ValueError:
-                flash("Formato de fecha inválido. Use AAAA-MM-DD.", "danger")
+                conn = conectar_db()
+                cursor = conn.cursor()
+                # Se agregó 'imagen' y un '?' extra a la consulta
+                cursor.execute("""
+                    INSERT INTO platos (nombre, descripcion, precio, activo, id_empresa, rubro, imagen) 
+                    VALUES (?, ?, ?, 1, ?, ?, ?)
+                """, (nombre, descripcion, precio, id_empresa, rubro, nombre_imagen))
+                conn.commit()
+                conn.close()
+                flash("Plato agregado con éxito.", "success")
+                return redirect(url_for('gestion_catalogo'))
             except Exception as e:
-                flash(f"Error al generar reportes: {e}", "danger")
-                current_app.logger.error(f"Error generando reportes de ventas: {e}")
+                flash(f"Error al guardar el plato: {e}", "danger")
 
-    return render_template('reportes_ventas.html',
-                           start_date=start_date,
-                           end_date=end_date,
-                           reportes=reportes_generados,
-                           empresas_disponibles=empresas_disponibles,
-                           selected_company_id=selected_company_id_str)
+    # 3. Lógica para mostrar el formulario (GET o POST fallido)
+    empresas = []
+    if current_user.has_role('super_admin'):
+        conn = conectar_db(); cursor = conn.cursor()
+        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+        empresas = cursor.fetchall(); conn.close()
+    
+    return render_template('agregar_plato.html', 
+                           empresas_disponibles=empresas, 
+                           request_form=request_form)  
+    
+@app.route('/gestion/catalogo/editar/<int:id_plato>', methods=['GET', 'POST'])
+@login_required
+def editar_plato(id_plato):
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    # 1. Buscamos el plato actual en la base de datos
+    cursor.execute("SELECT * FROM platos WHERE id_plato = ?", (id_plato,))
+    plato = cursor.fetchone()
+    
+    if not plato:
+        conn.close()
+        flash("Plato no encontrado.", "danger")
+        return redirect(url_for('gestion_catalogo'))
 
+    # Inicializamos request_form vacío para evitar errores en el GET
+    request_form = {}
+
+    if request.method == 'POST':
+        request_form = request.form
+        nombre = request.form.get('nombre')
+        descripcion = request.form.get('descripcion')
+        precio = request.form.get('precio')
+        rubro = request.form.get('rubro')
+        activo = 1 if 'activo' in request.form else 0
+        
+        # Mantenemos el nombre de la imagen actual por defecto
+        nombre_imagen_final = plato['imagen']
+
+        # 2. Lógica de actualización de imagen
+        if 'imagen' in request.files:
+            file = request.files['imagen']
+            
+            # Si el usuario seleccionó un archivo nuevo
+            if file and file.filename != '' and allowed_file(file.filename):
+                # A. Borrar la imagen anterior del servidor si existía
+                if plato['imagen']:
+                    ruta_vieja = os.path.join(app.config['UPLOAD_FOLDER'], plato['imagen'])
+                    if os.path.exists(ruta_vieja):
+                        try:
+                            os.remove(ruta_vieja)
+                        except Exception as e:
+                            print(f"No se pudo borrar la imagen vieja: {e}")
+
+                # B. Guardar la nueva imagen
+                filename = secure_filename(file.filename)
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                filename = f"{timestamp}_{filename}"
+                file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                
+                # C. Actualizamos el nombre que irá a la base de datos
+                nombre_imagen_final = filename
+
+        # 3. Guardar los cambios en la base de datos
+        try:
+            cursor.execute("""
+                UPDATE platos 
+                SET nombre=?, descripcion=?, precio=?, rubro=?, activo=?, imagen=? 
+                WHERE id_plato=?
+            """, (nombre, descripcion, precio, rubro, activo, nombre_imagen_final, id_plato))
+            conn.commit()
+            conn.close()
+            flash("Plato actualizado con éxito.", "success")
+            return redirect(url_for('gestion_catalogo'))
+        except Exception as e:
+            flash(f"Error al actualizar el plato: {e}", "danger")
+
+    conn.close()
+    # Enviamos plato (datos DB) y request_form (datos intento fallido) al template
+    return render_template('editar_plato.html', plato=plato, request_form=request_form)
+
+
+
+@app.route('/gestion/catalogo/eliminar/<int:id_plato>', methods=['POST'])
+@login_required
+def eliminar_plato(id_plato):
+    conn = conectar_db(); cursor = conn.cursor()
+    # En lugar de borrarlo físicamente, lo desactivamos para no romper pedidos viejos
+    cursor.execute("UPDATE platos SET activo = 0 WHERE id_plato = ?", (id_plato,))
+    conn.commit(); conn.close()
+    flash("Plato desactivado del catálogo.", "info")
+    return redirect(url_for('gestion_catalogo'))
+
+# --- API Carrito ---
+@app.route('/api/update_cart_complex', methods=['POST'])
+def update_cart_complex():
+    data = request.json # Recibimos JSON con plato_id, cantidad, opciones y notas
+    plato_id = data.get('plato_id')
+    cantidad = int(data.get('cantidad', 1))
+    opciones_elegidas = data.get('opciones', []) # Lista de ids de opciones
+    notas = data.get('notas', "").strip()
+
+    if 'carrito' not in session: session['carrito'] = {}
+
+    # Generamos una clave única para esta combinación
+    # Ej: "12_opc_1_4" (Plato 12 con opciones 1 y 4)
+    opciones_key = "_".join(map(str, sorted(opciones_elegidas)))
+    cart_key = f"{plato_id}_{opciones_key}_{notas}"
+
+    if cantidad <= 0:
+        if cart_key in session['carrito']: del session['carrito'][cart_key]
+    else:
+        conn = conectar_db(); cursor = conn.cursor()
+        cursor.execute("SELECT nombre, precio FROM platos WHERE id_plato = ?", (plato_id,))
+        p = cursor.fetchone()
+        
+        # Calcular precio extra
+        total_extra = 0
+        detalles_opciones = []
+        if opciones_elegidas:
+            placeholders = ','.join(['?' for _ in opciones_elegidas])
+            cursor.execute(f"SELECT nombre, precio_extra FROM plato_opciones WHERE id_opcion IN ({placeholders})", opciones_elegidas)
+            for opt in cursor.fetchall():
+                total_extra += opt['precio_extra']
+                detalles_opciones.append(opt['nombre'])
+        
+        conn.close()
+
+        session['carrito'][cart_key] = {
+            'id_plato': plato_id,
+            'nombre': p['nombre'],
+            'precio_base': p['precio'],
+            'precio_total_unitario': p['precio'] + total_extra,
+            'cantidad': cantidad,
+            'opciones_texto': ", ".join(detalles_opciones),
+            'notas': notas
+        }
+    
+    session.modified = True
+    return jsonify({"success": True})
+
+
+@app.route('/api/get_cart_status')
+def get_cart_status():
+    carrito = session.get('carrito', {})
+    
+    # Calculamos la cantidad total
+    total_items = sum(i['cantidad'] for i in carrito.values())
+    
+    # Calculamos el precio total usando 'precio_total_unitario' que es la clave que existe
+    total_precio = sum(i['precio_total_unitario'] * i['cantidad'] for i in carrito.values())
+    
+    return jsonify({
+        "success": True, 
+        "total_items": total_items, 
+        "total_precio": total_precio
+    })
+    
+    
+@app.route('/api/clear_cart', methods=['POST'])
+def clear_cart(): session.pop('carrito', None); return jsonify({"success": True})
+
+@app.route('/gestion/catalogo')
+@login_required
+def gestion_catalogo():
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    # Si no es super_admin, solo mostramos los platos de su empresa
+    if not current_user.has_role('super_admin'):
+        cursor.execute("SELECT * FROM platos WHERE id_empresa = ?", (current_user.id_empresa,))
+    else:
+        # El super_admin ve todo
+        cursor.execute("SELECT * FROM platos")
+        
+    p = cursor.fetchall()
+    conn.close()
+    return render_template('gestion_catalogo.html', platos=p)
+
+# --- Funciones Internas ---
+def _agregar_super_admin_inicial():
+    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("SELECT COUNT(*) FROM usuarios WHERE id_rol = 1")
+    if cursor.fetchone()[0] == 0:
+        hp = generate_password_hash("admin_password_inicial_segura", method='pbkdf2:sha256')
+        cursor.execute("INSERT INTO usuarios (email, password, nombre, apellido, id_rol, id_empresa, activo, primer_login_requerido) VALUES (?,?,?,?,1,NULL,1,0)", ("admin@tudominio.com", hp, "Super", "Admin"))
+        conn.commit(); conn.close()
+
+
+# --- RUTAS PARA ADMINISTRACIÓN DE MODIFICADORES ---
+
+@app.route('/api/plato/<int:id_plato>/modificadores')
+#@login_required
+def api_get_modificadores(id_plato):
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT * FROM plato_modificadores WHERE id_plato = ?", (id_plato,))
+    modificadores = [dict(m) for m in cursor.fetchall()]
+    
+    for mod in modificadores:
+        cursor.execute("SELECT * FROM plato_opciones WHERE id_modificador = ?", (mod['id_modificador'],))
+        mod['opciones'] = [dict(o) for o in cursor.fetchall()]
+    
+    conn.close()
+    return jsonify(modificadores)
+
+@app.route('/api/plato/modificador/guardar', methods=['POST'])
+@login_required
+def api_guardar_modificador():
+    data = request.json
+    id_plato = data.get('id_plato')
+    nombre = data.get('nombre')
+    tipo = data.get('tipo', 'radio') # 'radio' o 'checkbox'
+    obligatorio = 1 if data.get('obligatorio') else 0
+
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO plato_modificadores (id_plato, nombre, tipo, obligatorio) 
+        VALUES (?, ?, ?, ?)
+    """, (id_plato, nombre, tipo, obligatorio))
+    conn.commit(); conn.close()
+    return jsonify({"success": True})
+
+@app.route('/api/plato/opcion/guardar', methods=['POST'])
+@login_required
+def api_guardar_opcion():
+    data = request.json
+    id_modificador = data.get('id_modificador')
+    nombre = data.get('nombre')
+    precio = float(data.get('precio', 0))
+
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO plato_opciones (id_modificador, nombre, precio_extra) 
+        VALUES (?, ?, ?)
+    """, (id_modificador, nombre, precio))
+    conn.commit(); conn.close()
+    return jsonify({"success": True})
+
+@app.route('/api/plato/modificador/eliminar/<int:id_mod>', methods=['POST'])
+@login_required
+def api_eliminar_modificador(id_mod):
+    conn = conectar_db(); cursor = conn.cursor()
+    # Al borrar un modificador, borramos también sus opciones (cascada manual)
+    cursor.execute("DELETE FROM plato_opciones WHERE id_modificador = ?", (id_mod,))
+    cursor.execute("DELETE FROM plato_modificadores WHERE id_modificador = ?", (id_mod,))
+    conn.commit(); conn.close()
+    return jsonify({"success": True})
+
+@app.route('/api/plato/opcion/eliminar/<int:id_opcion>', methods=['POST'])
+@login_required
+def api_eliminar_opcion(id_opcion):
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("DELETE FROM plato_opciones WHERE id_opcion = ?", (id_opcion,))
+    conn.commit(); conn.close()
+    return jsonify({"success": True})
+
+
+
+# --- RUTAS PARA EL DASHBOARD DE COCINA ---
+
+
+@app.route('/gestion/cocina')
+@login_required
+def dashboard_cocina():
+    # El repartidor NO debe entrar a cocina
+    if current_user.has_role('repartidor'):
+        flash("No tienes acceso a la pantalla de cocina.", "danger")
+        return redirect(url_for('panel_repartidor'))
+    # Solo permitimos a empleados o admins de la empresa
+    return render_template('gestion_cocina.html')
+
+@app.route('/api/pedidos_pendientes_cocina')
+@login_required
+def api_pedidos_pendientes_cocina():
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    # 1. Filtro de seguridad por empresa o Super Admin
+    if current_user.has_role('super_admin'):
+        query_base = "SELECT * FROM pedidos WHERE estado_envio IN ('Recibido', 'En Preparación', 'Pendiente de WhatsApp')"
+        params = []
+    else:
+        query_base = "SELECT * FROM pedidos WHERE id_empresa = ? AND estado_envio IN ('Recibido', 'En Preparación', 'Pendiente de WhatsApp')"
+        params = [current_user.id_empresa]
+
+    cursor.execute(query_base + " ORDER BY horario_entrega ASC", params)
+    pedidos_rows = cursor.fetchall()
+    
+    pedidos_final = []
+    for row in pedidos_rows:
+        p = dict(row)
+        
+        # 2. Manejo de formato de hora
+        try:
+            fecha_str = p['horario_entrega']
+            hora_corta = fecha_str.split(' ')[1][:5] 
+        except:
+            hora_corta = "--:--"
+        
+        p['hora_corta'] = hora_corta
+
+        # 3. Buscar productos de ESTE pedido (BLOQUE CORREGIDO E INDENTADO)
+        cursor.execute("""
+            SELECT ip.id, ip.cantidad, pl.nombre 
+            FROM items_pedido ip
+            JOIN platos pl ON ip.id_plato = pl.id_plato
+            WHERE ip.id_pedido = ?
+        """, (p['id_pedido'],))
+
+        items_lista = []
+        rows_items = cursor.fetchall()
+        
+        for item in rows_items:
+            # Buscamos modificadores/variantes para cada producto del pedido
+            cursor.execute("""
+                SELECT nombre_opcion 
+                FROM items_pedido_modificadores 
+                WHERE id_item_pedido = ?
+            """, (item['id'],))
+            
+            mods = [m['nombre_opcion'] for m in cursor.fetchall()]
+            
+            item_dict = dict(item)
+            item_dict['detalle'] = " | ".join(mods) # Unimos variantes: "Punto Cocido | Extra Bacon"
+            items_lista.append(item_dict)
+
+        # Guardamos la lista de productos dentro del pedido
+        p['items'] = items_lista
+        
+        # Agregamos el pedido completo a la lista final
+        pedidos_final.append(p)
+        
+    conn.close()
+    return jsonify(pedidos_final)
+
+
+
+def _fetch_report_data(sd, ed, cid):
+    f1, f2 = sd + " 00:00:00", ed + " 23:59:59"
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Obtener lista detallada de pedidos (NUEVO)
+    query_pedidos = "SELECT * FROM pedidos WHERE fecha_creacion BETWEEN ? AND ?"
+    params = [f1, f2]
+    if cid and cid != 'all':
+        query_pedidos += " AND id_empresa = ?"
+        params.append(cid)
+    
+    cursor.execute(query_pedidos + " ORDER BY fecha_creacion DESC", params)
+    pedidos_detallados = [dict(row) for row in cursor.fetchall()]
+    
+    # 2. Total de ingresos
+    ingresos_totales = sum(p['costo_total'] for p in pedidos_detallados)
+
+    # 3. Top productos (tu lógica actual)
+    cursor.execute("""
+        SELECT pl.nombre, pl.rubro, SUM(ip.cantidad) as total_cantidad_vendida 
+        FROM items_pedido ip 
+        JOIN platos pl ON ip.id_plato = pl.id_plato 
+        JOIN pedidos p ON ip.id_pedido = p.id_pedido 
+        WHERE p.fecha_creacion BETWEEN ? AND ? 
+        GROUP BY pl.id_plato 
+        ORDER BY total_cantidad_vendida DESC
+    """, [f1, f2])
+    top_selling = [dict(row) for row in cursor.fetchall()]
+
+    # 4. Medios de pago
+    cursor.execute("""
+        SELECT forma_pago, COUNT(*) as total_usos, SUM(costo_total) as total_monto 
+        FROM pedidos WHERE fecha_creacion BETWEEN ? AND ? 
+        GROUP BY forma_pago
+    """, [f1, f2])
+    pagos = [dict(row) for row in cursor.fetchall()]
+
+    conn.close()
+    return {
+        'pedidos_detallados': pedidos_detallados,
+        'ingresos_totales': ingresos_totales,
+        'top_selling_overall': top_selling,
+        'most_used_payment_methods': pagos
+    }
+
+def _obtener_pedido_por_token(token):
+    """Busca el ID de un pedido usando su token único y luego carga el pedido completo."""
+    conn = conectar_db()
+    cursor = conn.cursor()
+    # Buscamos el ID del pedido asociado a ese token secreto
+    cursor.execute("SELECT id_pedido FROM pedidos WHERE token = ?", (token,))
+    res = cursor.fetchone()
+    conn.close()
+    
+    if res:
+        # Si el token existe, cargamos los datos y los items del pedido.
+        # Usamos bypass_security=True porque el token ya es la prueba de acceso.
+        return _obtener_pedido_completo_por_id(res['id_pedido'], bypass_security=True)
+    return None
+
+
+def _obtener_pedido_completo_por_id(id_pedido, bypass_security=False):
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # Lógica de seguridad (se mantiene igual)
+    if bypass_security:
+        cursor.execute("SELECT * FROM pedidos WHERE id_pedido = ?", (id_pedido,))
+    elif current_user.is_authenticated:
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT * FROM pedidos WHERE id_pedido = ?", (id_pedido,))
+        else:
+            cursor.execute("SELECT * FROM pedidos WHERE id_pedido = ? AND id_empresa = ?", (id_pedido, current_user.id_empresa))
+    else:
+        conn.close(); return None
+        
+    p = cursor.fetchone()
+    if not p: conn.close(); return None
+    
+    # ACTUALIZACIÓN: Se añade id_cliente=p['id_cliente'] al constructor
+    ped = Pedido(
+        id_pedido=p['id_pedido'], cliente_nombre=p['cliente_nombre'], cliente_apellido=p['cliente_apellido'], 
+        direccion_entrega=p['direccion_entrega'], es_envio=p['es_envio'], horario_entrega=p['horario_entrega'], 
+        costo_envio=p['costo_envio'], costo_total=p['costo_total'], forma_pago=p['forma_pago'], 
+        estado_pago=p['estado_pago'], fecha_creacion=p['fecha_creacion'], lat_cliente=p['lat_cliente'], 
+        lon_cliente=p['lon_cliente'], estado_envio=p['estado_envio'], id_empresa=p['id_empresa'], 
+        token=p['token'], id_cliente=p['id_cliente'],telefono_cliente=p['telefono_cliente'] # <--- Cambio aquí
+    )
+    
+    # --- CARGA DE PRODUCTOS CON SUS MODIFICADORES --- (Se mantiene igual)
+    cursor.execute("""
+        SELECT ip.id, ip.id_plato, ip.cantidad, ip.precio_unitario, pl.nombre 
+        FROM items_pedido ip 
+        JOIN platos pl ON ip.id_plato = pl.id_plato 
+        WHERE ip.id_pedido = ?
+    """, (id_pedido,))
+    
+    for i in cursor.fetchall(): 
+        # Buscamos los modificadores de este ítem específico
+        cursor.execute("SELECT nombre_opcion FROM items_pedido_modificadores WHERE id_item_pedido = ?", (i['id'],))
+        mods = cursor.fetchall()
+        # Los unimos en un solo texto (Ej: "A punto / Sin cebolla")
+        detalle_texto = " / ".join([m['nombre_opcion'] for m in mods])
+        
+        plato_data = Plato(i['id_plato'], i['nombre'], "", i['precio_unitario'])
+        ped.agregar_item(plato_data, i['cantidad'], i['precio_unitario'], detalle_texto)
+    
+    conn.close()
+    return ped
+
+def init_app():
+    crear_tablas()
+    _agregar_super_admin_inicial()
 
 if __name__ == '__main__':
-    # --- SUGERENCIA: Descomenta las siguientes líneas si quieres forzar la recreación de la DB
-    # --- Esto es útil para desarrollo cuando se hacen cambios en las tablas.
-    # --- ADVERTENCIA: ¡Esto borrará todos tus datos actuales de la base de datos!
-    # if os.path.exists(DB_NAME):
-    #     os.remove(DB_NAME)
-    #     print(f"Base de datos '{DB_NAME}' eliminada para recreación.")
-
     init_app()
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)

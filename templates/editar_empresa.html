@@ -1,55 +1,176 @@
 {% extends "base.html" %}
 
-{% block title %}Editar Empresa{% endblock %}
+{% block title %}Configuración de Sucursal - {{ empresa.nombre }}{% endblock %}
 
 {% block content %}
-<div class="row justify-content-center">
-    <div class="col-md-8">
-        <div class="card mt-4">
-            <div class="card-header bg-warning text-white">
-                <h4 class="mb-0">Editar Empresa: {{ empresa.nombre }}</h4>
+<div class="container py-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="fw-bold mb-0">Configuración de Sucursal y Horarios Partidos</h2>
+        <a href="{{ url_for('gestion_empresas') }}" class="btn btn-outline-secondary rounded-pill px-4">Volver</a>
+    </div>
+
+    <form action="{{ url_for('edita_empresa', id_empresa=empresa.id_empresa) }}" method="POST">
+        
+        <!-- SECCIÓN 1: DATOS GENERALES -->
+        <div class="row g-4 mb-4">
+            <div class="col-md-6">
+                <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                    <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-info-circle me-2"></i>Información Básica</h5>
+                    <div class="mb-3">
+                        <label for="nombre" class="form-label small fw-bold">Nombre de la Empresa</label>
+                        <input type="text" class="form-control" id="nombre" name="nombre" 
+                            value="{{ request_form.nombre if request_form.nombre else empresa.nombre }}" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="telefono" class="form-label small fw-bold">Número de Celular / WhatsApp</label>
+                        <input type="text" class="form-control" id="telefono" name="telefono" 
+                            value="{{ request_form.telefono if request_form.telefono else empresa.telefono if empresa.telefono else '' }}">
+                        <div class="form-text">Para contacto directo de clientes.</div>
+                    </div>
+                    <div class="form-check form-switch mt-3">
+                        <input class="form-check-input" type="checkbox" id="activo" name="activo" 
+                            {% if request_form.activo is defined %}{% if request_form.activo %}checked{% endif %}{% else %}{% if empresa.activo %}checked{% endif %}{% endif %}>
+                        <label class="form-check-label fw-bold" for="activo">Sucursal Activa (Visible al público)</label>
+                    </div>
+                </div>
             </div>
-            <div class="card-body">
-                {% with messages = get_flashed_messages(with_categories=true) %}
-                    {% if messages %}
-                        {% for category, message in messages %}
-                            <div class="alert alert-{{ category }}">{{ message }}</div>
-                        {% endfor %}
-                    {% endif %}
-                {% endwith %}
-                <form action="{{ url_for('edita_empresa', id_empresa=empresa.id_empresa) }}" method="POST">
-                    <div class="mb-3">
-                        <label for="nombre" class="form-label">Nombre de la Empresa</label>
-                        <input type="text" class="form-control" id="nombre" name="nombre" value="{{ request_form.nombre if request_form.nombre else empresa.nombre }}" required>
-                    </div>
-                    
-                    {# NUEVO CAMPO: Número de Celular #}
-                    <div class="mb-3">
-                        <label for="telefono" class="form-label">Número de Celular</label>
-                        <input type="text" class="form-control" id="telefono" name="telefono" value="{{ request_form.telefono if request_form.telefono else empresa.telefono if empresa.telefono else '' }}">
-                        <div class="form-text">Opcional.</div>
-                    </div>
 
-                    {# NUEVO CAMPO: Dirección #}
-                    <div class="mb-3">
-                        <label for="direccion" class="form-label">Dirección</label>
-                        <input type="text" class="form-control" id="direccion" name="direccion" value="{{ request_form.direccion if request_form.direccion else empresa.direccion if empresa.direccion else '' }}">
-                        <div class="form-text">Opcional.</div>
+            <!-- SECCIÓN 2: DIRECCIÓN -->
+            <div class="col-md-6">
+                <div class="card border-0 shadow-sm rounded-4 p-4 h-100">
+                    <h5 class="fw-bold mb-3 text-primary"><i class="bi bi-geo-alt me-2"></i>Ubicación Geográfica</h5>
+                    <div class="row g-2">
+                        <div class="col-8 mb-3">
+                            <label class="form-label small fw-bold">Calle</label>
+                            <input type="text" class="form-control" name="calle" required 
+                                value="{{ request_form.calle if request_form.calle else empresa.calle if empresa.calle else '' }}">
+                        </div>
+                        <div class="col-4 mb-3">
+                            <label class="form-label small fw-bold">Altura</label>
+                            <input type="text" class="form-control" name="altura" required 
+                                value="{{ request_form.altura if request_form.altura else empresa.altura if empresa.altura else '' }}">
+                        </div>
                     </div>
-
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" class="form-check-input" id="activo" name="activo" {% if request_form.activo is defined %} {% if request_form.activo %}checked{% endif %} {% else %} {% if empresa.activo %}checked{% endif %} {% endif %}>
-                        <label class="form-check-label" for="activo">Activa</label>
+                    <div class="row g-2">
+                        <div class="col-6 mb-3">
+                            <label class="form-label small fw-bold">Localidad</label>
+                            <input type="text" class="form-control" name="localidad" required 
+                                value="{{ request_form.localidad if request_form.localidad else empresa.localidad if empresa.localidad else '' }}">
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label small fw-bold">Provincia</label>
+                            <input type="text" class="form-control" name="provincia" required 
+                                value="{{ request_form.provincia if request_form.provincia else empresa.provincia if empresa.provincia else '' }}">
+                        </div>
                     </div>
-                    <div class="d-flex justify-content-between">
-                        <a href="{{ url_for('gestion_empresas') }}" class="btn btn-secondary">Cancelar</a>
-                        <button type="submit" class="btn btn-success">
-                            <i class="bi bi-save"></i> Guardar Cambios
-                        </button>
-                    </div>
-                </form>
+                    <div class="form-text text-danger italic"><i class="bi bi-geo-fill"></i> La dirección se usará para calcular el radio de entrega.</div>
+                </div>
             </div>
         </div>
-    </div>
+
+        <!-- SECCIÓN 3: HORARIOS (TU TABLA ORIGINAL MEJORADA) -->
+        <div class="card border-0 shadow-sm rounded-4 overflow-hidden">
+            <div class="card-header bg-dark text-white py-3">
+                <h5 class="mb-0"><i class="bi bi-calendar-range me-2"></i>Cronograma Semanal de Atención</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-4" style="width: 150px;">Día</th>
+                                <th style="width: 120px;">Estado</th>
+                                <th>Turnos de Atención (Ej: Mañana y Noche)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for i in range(7) %}
+                            {% set dia_config = horarios.get(i|string, {'abierto': False, 'turnos': []}) %}
+                            <tr>
+                                <td class="ps-4 fw-bold text-uppercase small text-muted">{{ dias[i] }}</td>
+                                <td>
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" name="abierto_{{ i }}" {% if dia_config.abierto %}checked{% endif %}>
+                                        <label class="small">Abre</label>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div id="container-{{ i }}" class="py-2">
+                                        {% for turno in dia_config.turnos %}
+                                        <div class="row g-2 mb-2 turno-row align-items-center">
+                                            <div class="col-auto">
+                                                <input type="time" name="inicio_{{ i }}[]" class="form-control form-control-sm" value="{{ turno.inicio }}" required>
+                                            </div>
+                                            <div class="col-auto"><span class="small text-muted">a</span></div>
+                                            <div class="col-auto">
+                                                <input type="time" name="fin_{{ i }}[]" class="form-control form-control-sm" value="{{ turno.fin }}" required>
+                                            </div>
+                                            <div class="col-auto">
+                                                <button type="button" class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('.turno-row').remove()">
+                                                    <i class="bi bi-trash3"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                        {% else %}
+                                        <p class="small text-muted mb-1 no-turnos">Sin turnos configurados.</p>
+                                        {% endfor %}
+                                    </div>
+                                    <button type="button" class="btn btn-sm btn-link text-primary p-0 fw-bold text-decoration-none" onclick="agregarTurnoExtra({{ i }})">
+                                        <i class="bi bi-plus-circle-fill"></i> AGREGAR TURNO
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="mt-5 text-end pb-5">
+            <hr>
+            <button type="submit" class="btn btn-success btn-lg rounded-pill px-5 fw-bold shadow">
+                <i class="bi bi-cloud-check me-2"></i>GUARDAR TODA LA CONFIGURACIÓN
+            </button>
+        </div>
+    </form>
 </div>
+
+<script>
+// Función corregida para coincidir con el llamado del botón
+function agregarTurnoExtra(diaId) {
+    const container = document.getElementById(`container-${diaId}`);
+    const noTurnosMsg = container.querySelector('.no-turnos');
+    if (noTurnosMsg) noTurnosMsg.remove();
+
+    const div = document.createElement('div');
+    div.className = 'row g-2 mb-2 turno-row animate__animated animate__fadeIn align-items-center';
+    div.innerHTML = `
+        <div class="col-auto">
+            <input type="time" name="inicio_${diaId}[]" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-auto"><span class="small text-muted">a</span></div>
+        <div class="col-auto">
+            <input type="time" name="fin_${diaId}[]" class="form-control form-control-sm" required>
+        </div>
+        <div class="col-auto">
+            <button type="button" class="btn btn-sm btn-outline-danger border-0" onclick="this.closest('.turno-row').remove()">
+                <i class="bi bi-trash3"></i>
+            </button>
+        </div>
+    `;
+    container.appendChild(div);
+}
+</script>
+
+<style>
+    .rounded-4 { border-radius: 1rem !important; }
+    .turno-row { transition: all 0.3s ease; }
+    .italic { font-style: italic; }
+    .form-control:focus, .form-select:focus {
+        border-color: #ffc107;
+        box-shadow: 0 0 0 0.25rem rgba(255, 193, 7, 0.15);
+    }
+    .btn-link:hover { color: #0a58ca !important; }
+</style>
 {% endblock %}

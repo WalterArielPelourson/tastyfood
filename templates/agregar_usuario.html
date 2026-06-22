@@ -5,64 +5,115 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-8">
-        <div class="card mt-4">
+        <div class="card mt-4 shadow-sm">
             <div class="card-header bg-primary text-white">
-                <h4 class="mb-0">Agregar Nuevo Usuario</h4>
+                <h4 class="mb-0"><i class="bi bi-person-plus-fill me-2"></i>Agregar Nuevo Usuario</h4>
             </div>
             <div class="card-body">
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
                         {% for category, message in messages %}
-                            <div class="alert alert-{{ category }}">{{ message }}</div>
+                            <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                            </div>
                         {% endfor %}
                     {% endif %}
                 {% endwith %}
+
                 <form action="{{ url_for('agregar_usuario') }}" method="POST">
-                    <div class="mb-3">
-                        <label for="email" class="form-label">Email</label>
-                        <input type="email" class="form-control" id="email" name="email" required value="{{ request_form.email if request_form.email else '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="nombre" class="form-label">Nombre</label>
-                        <input type="text" class="form-control" id="nombre" name="nombre" required value="{{ request_form.nombre if request_form.nombre else '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="apellido" class="form-label">Apellido</label>
-                        <input type="text" class="form-control" id="apellido" name="apellido" required value="{{ request_form.apellido if request_form.apellido else '' }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="id_rol" class="form-label">Rol</label>
-                        <select class="form-select" id="id_rol" name="id_rol" required>
-                            <option value="">Seleccione un Rol</option>
-                            {% for rol in roles %}
-                                <option value="{{ rol.id_rol }}" {% if request_form.id_rol == rol.id_rol|string %}selected{% endif %}>{{ rol.nombre_rol|capitalize }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label for="id_empresa" class="form-label">Empresa (Opcional, no para Super Admin)</label>
-                        <select class="form-select" id="id_empresa" name="id_empresa">
-                            <option value="">Ninguna</option>
-                            {% for empresa in empresas %}
-                                <option value="{{ empresa.id_empresa }}" {% if request_form.id_empresa == empresa.id_empresa|string %}selected{% endif %}>{{ empresa.nombre }}</option>
-                            {% endfor %}
-                        </select>
-                        <small class="form-text text-muted">Deja en "Ninguna" si el usuario es un Super Administrador.</small>
-                    </div>
-                    <div class="mb-3">
-                        <label for="password_inicial" class="form-label">Contraseña Inicial</label>
-                        <input type="password" class="form-control" id="password_inicial" name="password_inicial" required minlength="6">
-                        <small class="form-text text-muted">Se recomienda generar una contraseña fuerte.</small>
-                    </div>
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" class="form-check-input" id="primer_login_requerido" name="primer_login_requerido" checked>
-                        <label class="form-check-label" for="primer_login_requerido">Requerir cambio de contraseña en el primer login</label>
+                    <div class="row g-3">
+                        <div class="col-md-6 mb-3">
+                            <label for="nombre" class="form-label fw-bold">Nombre</label>
+                            <input type="text" class="form-control" id="nombre" name="nombre" required 
+                                   value="{{ request_form.nombre if request_form.nombre else '' }}" placeholder="Ej: Juan">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="apellido" class="form-label fw-bold">Apellido</label>
+                            <input type="text" class="form-control" id="apellido" name="apellido" required 
+                                   value="{{ request_form.apellido if request_form.apellido else '' }}" placeholder="Ej: Pérez">
+                        </div>
                     </div>
 
-                    <div class="d-flex justify-content-between">
-                        <a href="{{ url_for('gestion_usuarios') }}" class="btn btn-secondary">Cancelar</a>
-                        <button type="submit" class="btn btn-success">
-                            <i class="bi bi-person-plus"></i> Guardar Usuario
+                    <div class="mb-3">
+                        <label for="email" class="form-label fw-bold">Correo Electrónico</label>
+                        <input type="email" class="form-control" id="email" name="email" required 
+                               value="{{ request_form.email if request_form.email else '' }}" placeholder="nombre@ejemplo.com">
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="telefono" class="form-label fw-bold">Teléfono / Celular</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-phone"></i></span>
+                            <input type="text" class="form-control" id="telefono" name="telefono" 
+                                placeholder="Ej: 5491122334455" 
+                                value="{{ usuario.telefono if usuario else request_form.telefono }}">
+                        </div>
+                        <div class="form-text">Usar formato internacional (ej: 549 para Argentina).</div>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-6 mb-3">
+                            <label for="id_rol" class="form-label fw-bold">Rol</label>
+                            <select class="form-select" id="id_rol" name="id_rol" required>
+                                <option value="" disabled {{ 'selected' if not request_form.id_rol }}>Seleccione un Rol</option>
+                                {% for rol in roles %}
+                                    <option value="{{ rol.id_rol }}" 
+                                        {% if request_form.id_rol and request_form.id_rol|int == rol.id_rol|int %}selected{% endif %}>
+                                        {{ rol.nombre_rol|replace('_', ' ')|capitalize }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="id_repartidor_vinculado" class="form-label fw-bold text-primary">
+                                <i class="bi bi-bicycle"></i> Vincular con Repartidor Físico
+                            </label>
+                            <select class="form-select" id="id_repartidor_vinculado" name="id_repartidor_vinculado">
+                                <option value="">-- Ninguno (No es repartidor) --</option>
+                                {% for rep in repartidores %}
+                                    <option value="{{ rep.id_repartidor }}" 
+                                        {% if request_form.id_repartidor_vinculado|string == rep.id_repartidor|string %}selected{% endif %}>
+                                        {{ rep.nombre }} {{ rep.apellido }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Si este usuario es un repartidor, selecciónalo aquí para que vea sus pedidos.</div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="id_empresa" class="form-label fw-bold">Empresa Asignada</label>
+                            <select class="form-select" id="id_empresa" name="id_empresa">
+                                <option value="" {{ 'selected' if not request_form.id_empresa }}>Ninguna (Solo Super Admin)</option>
+                                {% for empresa in empresas %}
+                                    <option value="{{ empresa.id_empresa }}" 
+                                        {% if request_form.id_empresa and request_form.id_empresa|int == empresa.id_empresa|int %}selected{% endif %}>
+                                        {{ empresa.nombre }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="password_inicial" class="form-label fw-bold">Contraseña Inicial</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-key"></i></span>
+                            <input type="password" class="form-control" id="password_inicial" name="password_inicial" required minlength="6" placeholder="Mínimo 6 caracteres">
+                        </div>
+                        <small class="form-text text-muted">Se le pedirá al usuario que cambie esta contraseña al ingresar.</small>
+                    </div>
+
+                    <div class="mb-4 form-check form-switch py-2 bg-light rounded px-5">
+                        <input type="checkbox" class="form-check-input" id="primer_login_requerido" name="primer_login_requerido" checked>
+                        <label class="form-check-label fw-bold" for="primer_login_requerido">Requerir cambio de contraseña en el primer login</label>
+                    </div>
+
+                    <div class="d-flex justify-content-between align-items-center border-top pt-3">
+                        <a href="{{ url_for('gestion_usuarios') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-x-circle me-1"></i> Cancelar
+                        </a>
+                        <button type="submit" class="btn btn-success px-4">
+                            <i class="bi bi-check-circle me-1"></i> Guardar Usuario
                         </button>
                     </div>
                 </form>

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Gestión de Insumos{% endblock %}
+{% block content %}
+<div class="container py-4">
+    <h1 class="fw-bold mb-4">Inventario de Materia Prima</h1>
+
+    <!-- Formulario para agregar o actualizar insumo -->
+    <div class="card shadow-sm mb-4 border-0 rounded-4">
+        <div class="card-body">
+            <h5 class="fw-bold mb-3"><i class="bi bi-plus-circle me-2"></i>Ingreso de Mercadería / Nuevo Insumo</h5>
+            <form method="POST" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">Nombre del Insumo</label>
+                    <input type="text" name="nombre" class="form-control" placeholder="Ej: Carne Molida" required>
+                    <div class="form-text x-small">Si ya existe, se sumará la cantidad.</div>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">U. Medida</label>
+                    <select name="unidad_medida" class="form-select">
+                        <option value="kg">Kilogramos (kg)</option>
+                        <option value="unidades">Unidades (u)</option>
+                        <option value="litros">Litros (l)</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Cant. a Ingresar</label>
+                    <input type="number" step="0.01" name="stock_actual" class="form-control" value="0" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Costo Compra (u)</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" step="0.01" name="precio_compra" class="form-control" placeholder="0.00" required>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Mínimo Alerta</label>
+                    <input type="number" step="0.01" name="stock_minimo" class="form-control" value="5">
+                </div>
+                <div class="col-md-1 d-flex align-items-end">
+                    <button type="submit" class="btn btn-dark w-100 fw-bold">Ok</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tabla de Insumos -->
+    <div class="card shadow-sm border-0 rounded-4">
+        <div class="card-body">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Insumo</th>
+                        {% if current_user.has_role('super_admin') %}<th>Empresa</th>{% endif %}
+                        <th>Stock Actual</th>
+                        <th>Mínimo Alerta</th>
+                        <th>Costo Compra</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for i in insumos %}
+                    <tr>
+                        <td><strong class="text-dark">{{ i.nombre }}</strong></td>
+                        {% if current_user.has_role('super_admin') %}
+                            <td><span class="badge bg-secondary">{{ i.empresa_n }}</span></td>
+                        {% endif %}
+                        <td class="fw-bold">{{ i.stock_actual }} {{ i.unidad_medida }}</td>
+                        <td class="text-muted">{{ i.stock_minimo }}</td>
+                        <td class="text-primary fw-bold">${{ "{:,.2f}".format(i.precio_compra) }}</td>
+                        <td>
+                            {% if i.stock_actual <= i.stock_minimo %}
+                                <span class="badge bg-danger"><i class="bi bi-exclamation-triangle"></i> REPOSICIÓN</span>
+                            {% else %}
+                                <span class="badge bg-success"><i class="bi bi-check-circle"></i> OK</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ url_for('editar_insumo', id_insumo=i.id_insumo) }}" class="btn btn-sm btn-outline-warning border-0">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="{% if current_user.has_role('super_admin') %}7{% else %}6{% endif %}" class="text-center py-4 text-muted">
+                            No hay insumos cargados. ¡Empieza agregando uno arriba!
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

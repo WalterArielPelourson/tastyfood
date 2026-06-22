@@ -3,111 +3,181 @@
 {% block title %}Arqueo de Caja{% endblock %}
 
 {% block content %}
-    <h1 class="mb-4">Arqueo de Caja</h1>
+    <h1 class="mb-4 fw-bold"><i class="fas fa-cash-register me-2 text-primary"></i>Arqueo de Caja</h1>
 
-    <div class="row">
-        <div class="col-md-6">
-            <div class="card p-4 shadow-sm mb-4">
-                <h4 class="mb-3">Registrar Egreso Manual</h4>
+    <div class="row g-4 mb-4">
+        <!-- Registrar Ingreso Manual (Apertura / Fondo de Caja) -->
+        <div class="col-md-4">
+            <div class="card p-4 shadow-sm border-0 rounded-4 h-100">
+                <h4 class="mb-3 text-success fw-bold"><i class="fas fa-plus-circle me-2"></i>Ingreso Manual</h4>
                 <form action="{{ url_for('arqueo_caja') }}" method="POST">
-                    <input type="hidden" name="registrar_egreso" value="1">
+                    <input type="hidden" name="registrar_ingreso" value="1">
                     <div class="mb-3">
-                        <label for="monto_egreso" class="form-label">Monto</label>
-                        <input type="number" step="0.01" class="form-control" id="monto_egreso" name="monto" required>
+                        <label class="form-label fw-bold small">Monto</label>
+                        <div class="input-group shadow-sm">
+                            <span class="input-group-text bg-success text-white border-0">$</span>
+                            <input type="number" step="0.01" class="form-control border-0 bg-light" name="monto" required placeholder="0.00">
+                        </div>
                     </div>
                     <div class="mb-3">
-                        <label for="descripcion_egreso" class="form-label">Descripción</label>
-                        <textarea class="form-control" id="descripcion_egreso" name="descripcion" rows="2" required></textarea>
+                        <label class="form-label fw-bold small">Concepto</label>
+                        <input type="text" class="form-control border-0 bg-light" name="descripcion" required placeholder="Ej: Apertura de caja / Fondo">
                     </div>
-                    <button type="submit" class="btn btn-danger w-100"><i class="bi bi-cash-stack"></i> Registrar Egreso</button>
+                    <button type="submit" class="btn btn-success w-100 fw-bold shadow-sm rounded-pill mt-2">
+                        <i class="fas fa-hand-holding-usd me-2"></i> Registrar Ingreso
+                    </button>
                 </form>
             </div>
         </div>
-        <div class="col-md-6">
-            <div class="card p-4 shadow-sm mb-4">
-                <h4 class="mb-3">Realizar Arqueo</h4>
+
+        <!-- Registrar Egreso Manual -->
+        <div class="col-md-4">
+            <div class="card p-4 shadow-sm border-0 rounded-4 h-100">
+                <h4 class="mb-3 text-danger fw-bold"><i class="fas fa-minus-circle me-2"></i>Egreso Manual</h4>
+                <form action="{{ url_for('arqueo_caja') }}" method="POST">
+                    <input type="hidden" name="registrar_egreso" value="1">
+                    <div class="mb-3">
+                        <label for="monto_egreso" class="form-label fw-bold small">Monto</label>
+                        <div class="input-group shadow-sm">
+                            <span class="input-group-text bg-danger text-white border-0">$</span>
+                            <input type="number" step="0.01" class="form-control border-0 bg-light" id="monto_egreso" name="monto" required placeholder="0.00">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="descripcion_egreso" class="form-label fw-bold small">Descripción / Concepto</label>
+                        <input type="text" class="form-control border-0 bg-light" id="descripcion_egreso" name="descripcion" required placeholder="Ej: Pago a proveedor">
+                    </div>
+                    <button type="submit" class="btn btn-danger w-100 fw-bold shadow-sm rounded-pill mt-2">
+                        <i class="fas fa-file-invoice-dollar me-2"></i> Registrar Egreso
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Realizar Arqueo -->
+        <div class="col-md-4">
+            <div class="card p-4 shadow-sm border-0 rounded-4 h-100">
+                <h4 class="mb-3 text-primary fw-bold"><i class="fas fa-search me-2"></i>Consultar</h4>
                 <form action="{{ url_for('arqueo_caja') }}" method="POST">
                     <input type="hidden" name="realizar_arqueo" value="1">
                     <div class="mb-3">
-                        <label for="fecha_inicio" class="form-label">Fecha de Inicio</label>
-                        <input type="date" class="form-control" id="fecha_inicio" name="fecha_inicio" value="{{ now.strftime('%Y-%m-%d') }}" required>
+                        <label for="fecha_inicio" class="form-label fw-bold small">Fecha de Inicio</label>
+                        <input type="date" class="form-control border-0 bg-light shadow-sm" id="fecha_inicio" name="fecha_inicio" value="{{ now.strftime('%Y-%m-%d') }}" required>
                     </div>
                     <div class="mb-3">
-                        <label for="fecha_fin" class="form-label">Fecha de Fin</label>
-                        <input type="date" class="form-control" id="fecha_fin" name="fecha_fin" value="{{ now.strftime('%Y-%m-%d') }}" required>
+                        <label for="fecha_fin" class="form-label fw-bold small">Fecha de Fin</label>
+                        <input type="date" class="form-control border-0 bg-light shadow-sm" id="fecha_fin" name="fecha_fin" value="{{ now.strftime('%Y-%m-%d') }}" required>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100"><i class="bi bi-calculator"></i> Mostrar Arqueo</button>
+                    <button type="submit" class="btn btn-primary w-100 fw-bold shadow-sm rounded-pill mt-2">
+                        <i class="fas fa-calculator me-2"></i> Mostrar Arqueo
+                    </button>
                 </form>
             </div>
         </div>
     </div>
 
+    <!-- Resultados del Arqueo -->
     {% if arqueo_resultados %}
-        <div class="mt-5">
-            <h3 class="mb-3">Resultados del Arqueo ({{ arqueo_resultados.fecha_inicio }} a {{ arqueo_resultados.fecha_fin }})</h3>
-            <div class="table-responsive">
-                <table class="table table-bordered table-striped">
-                    <thead>
+        <div class="mt-5 animate__animated animate__fadeIn">
+            <h3 class="mb-3 fw-bold text-dark">Detalle de Movimientos</h3>
+            <div class="table-responsive shadow-lg rounded-4 overflow-hidden">
+                <table class="table table-hover align-middle bg-white mb-0">
+                    <thead class="table-dark">
                         <tr>
-                            <th>Fecha y Hora</th>
+                            <th class="ps-4">Fecha y Hora</th>
                             <th>Tipo</th>
+                            <th>Cliente / Origen</th>
+                            <th>Pago</th>
                             <th>Monto</th>
-                            <th>Descripción</th>
+                            <th class="pe-4">Descripción</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for movimiento in arqueo_resultados.movimientos %}
                             <tr>
-                                <td>{{ movimiento.fecha_hora_formateada }}</td>
-                                <td><span class="badge {% if movimiento.tipo == 'Ingreso' %}bg-success{% else %}bg-danger{% endif %}">{{ movimiento.tipo }}</span></td>
-                                <td>${{ "{:,.2f}".format(movimiento.monto) }}</td>
-                                <td>{{ movimiento.descripcion }}</td>
+                                <td class="ps-4 small text-muted">{{ movimiento.fecha_hora }}</td>
+                                <td>
+                                    <span class="badge rounded-pill {% if movimiento.tipo == 'Ingreso' %}bg-success{% else %}bg-danger{% endif %} px-3">
+                                        {{ movimiento.tipo }}
+                                    </span>
+                                </td>
+                                <td class="fw-bold">
+                                    {% if movimiento.cliente_nombre %}
+                                        {{ movimiento.cliente_nombre }} {{ movimiento.cliente_apellido }}
+                                        <div class="x-small text-muted fw-normal">Pedido #{{ movimiento.id_pedido_origen }}</div>
+                                    {% elif movimiento.rep_n %}
+                                        <i class="fas fa-motorcycle text-primary me-1"></i> {{ movimiento.rep_n }} {{ movimiento.rep_a }}
+                                        <div class="x-small text-muted fw-normal">Liquidación Repartidor</div>
+                                    {% else %}
+                                        <span class="text-muted small italic">Manual / Operación</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if movimiento.forma_pago %}
+                                        <span class="badge border border-secondary-subtle text-dark bg-light px-2">
+                                            <i class="fas fa-wallet me-1 text-primary"></i> {{ movimiento.forma_pago }}
+                                        </span>
+                                    {% else %}
+                                        <span class="text-muted small">---</span>
+                                    {% endif %}
+                                </td>
+                                <td class="fw-bold {% if movimiento.tipo == 'Ingreso' %}text-success{% else %}text-danger{% endif %}">
+                                    {% if movimiento.tipo == 'Ingreso' %}+{% else %}-{% endif %} ${{ "{:,.2f}".format(movimiento.monto) }}
+                                </td>
+                                <td class="pe-4 text-muted small">{{ movimiento.descripcion }}</td>
                             </tr>
                         {% else %}
                             <tr>
-                                <td colspan="4" class="text-center text-muted">No hay movimientos para el período seleccionado.</td>
+                                <td colspan="6" class="text-center py-5 text-muted">
+                                    <i class="fas fa-folder-open fa-2x mb-2 d-block"></i>
+                                    No hay movimientos para el período seleccionado.
+                                </td>
                             </tr>
                         {% endfor %}
                     </tbody>
-                    <tfoot>
-                        <tr class="table-primary">
-                            <th colspan="2">Total Ingresos:</th>
-                            <th colspan="2">${{ "{:,.2f}".format(arqueo_resultados.total_ingresos) }}</th>
+                    <tfoot class="table-light">
+                        <tr>
+                            <th colspan="4" class="text-end ps-4">Total Ingresos:</th>
+                            <th colspan="2" class="text-success pe-4 h5 mb-0 fw-bold">${{ "{:,.2f}".format(arqueo_resultados.total_ingresos) }}</th>
                         </tr>
-                        <tr class="table-danger">
-                            <th colspan="2">Total Egresos:</th>
-                            <th colspan="2">${{ "{:,.2f}".format(arqueo_resultados.total_egresos) }}</th>
+                        <tr>
+                            <th colspan="4" class="text-end ps-4">Total Egresos:</th>
+                            <th colspan="2" class="text-danger pe-4 h5 mb-0 fw-bold">${{ "{:,.2f}".format(arqueo_resultados.total_egresos) }}</th>
                         </tr>
-                        <tr class="table-success fw-bold">
-                            <th colspan="2">BALANCE FINAL:</th>
-                            <th colspan="2">${{ "{:,.2f}".format(arqueo_resultados.balance) }}</th>
+                        <tr class="table-secondary">
+                            <th colspan="4" class="text-end ps-4 h4 fw-bold">BALANCE FINAL:</th>
+                            <th colspan="2" class="pe-4 h4 fw-bold {% if arqueo_resultados.balance|default(0) >= 0 %}text-success{% else %}text-danger{% endif %}">
+                                ${{ "{:,.2f}".format(arqueo_resultados.balance|default(0)) }}
+                            </th>
                         </tr>
                     </tfoot>
                 </table>
             </div>
         </div>
+    {% else %}
+        <div class="text-center py-5 text-muted bg-light rounded-4 mt-4 border border-dashed">
+            <i class="fas fa-info-circle mb-2 d-block" style="font-size: 3rem; opacity: 0.3;"></i>
+            <p class="fw-bold">Seleccioná un rango de fechas para visualizar los movimientos de caja.</p>
+        </div>
     {% endif %}
+
+    <style>
+        .x-small { font-size: 0.75rem; }
+        .italic { font-style: italic; }
+        .border-dashed { border-style: dashed !important; border-width: 2px !important; }
+        .h-100 { height: 100% !important; }
+    </style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-    // Establecer la fecha actual en los campos de fecha de inicio y fin por defecto
     document.addEventListener('DOMContentLoaded', function() {
-        const today = new Date();
-        const yyyy = today.getFullYear();
-        const mm = String(today.getMonth() + 1).padStart(2, '0'); // Enero es 0!
-        const dd = String(today.getDate()).padStart(2, '0');
-        const todayFormatted = `${yyyy}-${mm}-${dd}`;
-
-        const fechaInicioInput = document.getElementById('fecha_inicio');
-        const fechaFinInput = document.getElementById('fecha_fin');
+        const today = new Date().toISOString().split('T')[0];
+        const fInicio = document.getElementById('fecha_inicio');
+        const fFin = document.getElementById('fecha_fin');
         
-        if (fechaInicioInput && !fechaInicioInput.value) {
-            fechaInicioInput.value = todayFormatted;
-        }
-        if (fechaFinInput && !fechaFinInput.value) {
-            fechaFinInput.value = todayFormatted;
-        }
+        if (fInicio && !fInicio.value) fInicio.value = today;
+        if (fFin && !fFin.value) fFin.value = today;
     });
 </script>
 {% endblock %}

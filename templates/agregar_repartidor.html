@@ -1,32 +1,50 @@
 {% extends "base.html" %}
 
-{% block title %}Agregar Repartidor{% endblock %}
-
 {% block content %}
-    <h1 class="mb-4">Agregar Nuevo Repartidor</h1>
-
+<div class="container py-5">
     <div class="row justify-content-center">
         <div class="col-md-6">
-            <div class="card shadow-sm">
-                <div class="card-body">
+            <div class="card shadow-sm border-0 rounded-4">
+                <div class="card-body p-4">
+                    <h4 class="fw-bold mb-4">Agregar Nuevo Repartidor</h4>
+                    
                     <form action="{{ url_for('agregar_repartidor') }}" method="POST">
                         <div class="mb-3">
-                            <label for="nombre" class="form-label">Nombre</label>
-                            <input type="text" class="form-control" id="nombre" name="nombre" required>
+                            <label class="form-label small fw-bold">Nombre</label>
+                            <input type="text" name="nombre" class="form-control" required>
                         </div>
+                        
                         <div class="mb-3">
-                            <label for="apellido" class="form-label">Apellido</label>
-                            <input type="text" class="form-control" id="apellido" name="apellido" required>
+                            <label class="form-label small fw-bold">Apellido</label>
+                            <input type="text" name="apellido" class="form-control" required>
                         </div>
+                        
                         <div class="mb-3">
-                            <label for="telefono" class="form-label">Teléfono (opcional)</label>
-                            <input type="text" class="form-control" id="telefono" name="telefono">
+                            <label class="form-label small fw-bold">Teléfono</label>
+                            <input type="text" name="telefono" class="form-control">
                         </div>
-                        <button type="submit" class="btn btn-primary">Guardar Repartidor</button>
-                        <a href="{{ url_for('gestion_repartidores') }}" class="btn btn-secondary">Cancelar</a>
+
+                        {% if current_user.has_role('super_admin') %}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Asignar a Empresa</label>
+                            <select name="id_empresa_asignar" class="form-select">
+                                {% for empresa in empresas_disponibles %}
+                                    <option value="{{ empresa.id_empresa }}">{{ empresa.nombre }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        {% endif %}
+
+                        <div class="mt-4">
+                            <button type="submit" class="btn btn-danger w-100 rounded-pill fw-bold">
+                                Guardar Repartidor
+                            </button>
+                            <a href="{{ url_for('gestion_repartidores') }}" class="btn btn-link w-100 text-muted mt-2">Cancelar</a>
+                        </div>
                     </form>
                 </div>
             </div>
         </div>
     </div>
+</div>
 {% endblock %}

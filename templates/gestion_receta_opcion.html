@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Receta de {{ data.opcion_nombre }}{% endblock %}
+{% block content %}
+<div class="container py-4">
+    <div class="mb-4">
+        <a href="{{ url_for('gestion_receta', id_plato=data.id_plato) }}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Volver a receta base
+        </a>
+        <h2 class="fw-bold mt-3">Ingredientes para: {{ data.modificador_nombre }} - {{ data.opcion_nombre }}</h2>
+        <p class="text-muted">Plato: {{ data.plato_nombre }}</p>
+    </div>
+
+    <div class="row">
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 rounded-4">
+                <div class="card-body">
+                    <h5 class="fw-bold mb-3">Añadir Insumo al Extra</h5>
+                    <form method="POST">
+                        <select name="id_insumo" class="form-select mb-3" required>
+                            {% for ins in insumos %}
+                            <option value="{{ ins.id_insumo }}">{{ ins.nombre }}</option>
+                            {% endfor %}
+                        </select>
+                        <input type="number" step="0.001" name="cantidad" class="form-control mb-3" placeholder="Cantidad (Ej: 0.050 para 50g)" required>
+                        <button type="submit" class="btn btn-primary w-100">Vincular a la Variante</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card shadow-sm border-0 rounded-4">
+                <div class="card-body">
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Ingrediente</th>
+                                <th>Cantidad</th>
+                                <th>Costo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in receta %}
+                            <tr>
+                                <td>{{ r.nombre }}</td>
+                                <td>{{ r.cantidad_requerida }} {{ r.unidad_medida }}</td>
+                                <td class="fw-bold text-danger">${{ "{:,.2f}".format(r.cantidad_requerida * r.precio_compra) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

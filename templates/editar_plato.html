@@ -5,11 +5,12 @@
 {% block content %}
 <div class="row justify-content-center">
     <div class="col-md-8">
-        <div class="card mt-4">
-            <div class="card-header bg-warning text-white">
-                <h4 class="mb-0">Editar Plato: {{ plato.nombre }} (ID: {{ plato.id_plato }})</h4>
+        <!-- FORMULARIO PRINCIPAL DEL PLATO -->
+        <div class="card mt-4 border-0 shadow-sm">
+            <div class="card-header bg-warning text-dark border-0 py-3">
+                <h4 class="mb-0 fw-bold"><i class="bi bi-pencil-square"></i> Editar Plato: {{ plato.nombre }}</h4>
             </div>
-            <div class="card-body">
+            <div class="card-body p-4">
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
                         {% for category, message in messages %}
@@ -17,47 +18,216 @@
                         {% endfor %}
                     {% endif %}
                 {% endwith %}
-                <form action="{{ url_for('editar_plato', id_plato=plato.id_plato) }}" method="POST">
-                    <div class="mb-3">
-                        <label for="nombre" class="form-label">Nombre del Plato</label>
-                        <input type="text" class="form-control" id="nombre" name="nombre" value="{{ request_form.nombre if request_form.nombre else plato.nombre }}" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="descripcion" class="form-label">Descripción</label>
-                        <textarea class="form-control" id="descripcion" name="descripcion" rows="3">{{ request_form.descripcion if request_form.descripcion else plato.descripcion }}</textarea>
-                    </div>
+
+                <form action="{{ url_for('editar_plato', id_plato=plato.id_plato) }}" method="POST" enctype="multipart/form-data">
                     
-                    {# NUEVO CAMPO: Rubro del Plato #}
                     <div class="mb-3">
-                        <label for="rubro" class="form-label">Rubro (Categoría)</label>
-                        <input type="text" class="form-control" id="rubro" name="rubro" value="{{ request_form.rubro if request_form.rubro else plato.rubro if plato.rubro else '' }}">
-                        <div class="form-text">Ej: Pizzas, Bebidas, Postres, Entradas, etc.</div>
+                        <label for="nombre" class="form-label fw-bold">Nombre del Plato</label>
+                        <input type="text" class="form-control" id="nombre" name="nombre" value="{{ request_form.nombre if request_form.nombre else plato.nombre }}" required>
                     </div>
 
                     <div class="mb-3">
-                        <label for="precio" class="form-label">Precio</label>
-                        <input type="number" step="0.01" class="form-control" id="precio" name="precio" value="{{ request_form.precio if request_form.precio else plato.precio }}" required>
+                        <label for="descripcion" class="form-label fw-bold">Descripción</label>
+                        <textarea class="form-control" id="descripcion" name="descripcion" rows="3">{{ request_form.descripcion if request_form.descripcion else plato.descripcion }}</textarea>
                     </div>
-                    <div class="form-check mb-3">
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="rubro" class="form-label fw-bold">Rubro (Categoría)</label>
+                            <input type="text" class="form-control" id="rubro" name="rubro" value="{{ request_form.rubro if request_form.rubro else plato.rubro if plato.rubro else '' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label for="precio" class="form-label fw-bold">Precio Base</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number" step="0.01" class="form-control" id="precio" name="precio" value="{{ request_form.precio if request_form.precio else plato.precio }}" required>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-4 p-3 border rounded bg-light">
+                        <label class="form-label d-block fw-bold">Imagen del Plato</label>
+                        {% if plato.imagen %}
+                        <div class="mb-3 text-center">
+                            <img src="{{ url_for('static', filename='uploads/platos/' + plato.imagen) }}" 
+                                 alt="Imagen actual" class="img-thumbnail" style="height: 150px; object-fit: cover;">
+                        </div>
+                        {% endif %}
+                        <div class="mb-2">
+                            <input type="file" class="form-control" id="imagen" name="imagen" accept="image/*">
+                            <div class="form-text">Formatos permitidos: JPG, PNG, GIF.</div>
+                        </div>
+                    </div>
+
+                    <div class="form-check form-switch mb-4">
                         <input class="form-check-input" type="checkbox" id="activo" name="activo" 
-                        {% if request_form.activo is defined %}
-                            {% if request_form.activo %}checked{% endif %}
-                        {% else %}
-                            {% if plato.activo %}checked{% endif %}
-                        {% endif %}>
-                        <label class="form-check-label" for="activo">
-                            Activo (aparecerá en la carta)
-                        </label>
+                        {% if (request_form.activo is defined and request_form.activo) or (request_form.activo is not defined and plato.activo) %}checked{% endif %}>
+                        <label class="form-check-label" for="activo">Plato activo en la carta</label>
                     </div>
-                    <div class="d-flex justify-content-between">
-                        <a href="{{ url_for('gestion_catalogo') }}" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Volver</a>
-                        <button type="submit" class="btn btn-success">
-                            <i class="bi bi-save"></i> Guardar Cambios
+
+                    <div class="d-flex justify-content-between border-top pt-4">
+                        <a href="{{ url_for('gestion_catalogo') }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Volver
+                        </a>
+                        <button type="submit" class="btn btn-success px-4">
+                            <i class="bi bi-save"></i> Guardar Cambios Básicos
                         </button>
                     </div>
                 </form>
             </div>
         </div>
+
+        <!-- SECCIÓN DE VARIANTES Y MODIFICADORES (NUEVA) -->
+        <div class="card mt-5 mb-5 border-0 shadow-sm border-start border-primary border-4">
+            <div class="card-body p-4">
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <div>
+                        <h4 class="mb-1 fw-bold text-primary">Variantes y Modificadores</h4>
+                        <p class="text-muted small">Configura opciones como puntos de carne, ingredientes extra o combos.</p>
+                    </div>
+                    <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#modalModificador">
+                        <i class="bi bi-plus-lg"></i> Nuevo Grupo
+                    </button>
+                </div>
+
+                <div id="lista-modificadores" class="row">
+                    <!-- Cargado dinámicamente vía JS -->
+                </div>
+            </div>
+        </div>
     </div>
 </div>
+
+<!-- Modal para Crear Grupo de Modificador -->
+<div class="modal fade" id="modalModificador" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title fw-bold">Nuevo Grupo de Opciones</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Nombre del Grupo</label>
+                    <input type="text" id="mod_nombre" class="form-control" placeholder="Ej: Puntos de la carne, Elegí tu salsa...">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Tipo de Selección</label>
+                    <select id="mod_tipo" class="form-select">
+                        <option value="radio">Obligatorio: Solo una opción (Radio)</option>
+                        <option value="checkbox">Opcional: Múltiples opciones (Checkbox)</option>
+                    </select>
+                </div>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="mod_obligatorio" checked>
+                    <label class="form-check-label">Es obligatorio elegir al menos una opción</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" onclick="guardarModificador()" class="btn btn-primary">Crear Grupo</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const ID_PLATO = {{ plato.id_plato }};
+
+function cargarModificadores() {
+    fetch(`/api/plato/${ID_PLATO}/modificadores`)
+        .then(res => res.json())
+        .then(data => {
+            const lista = document.getElementById('lista-modificadores');
+            lista.innerHTML = '';
+            
+            if (data.length === 0) {
+                lista.innerHTML = '<div class="col-12 text-center text-muted py-4">No hay modificadores creados para este plato.</div>';
+                return;
+            }
+
+            data.forEach(m => {
+                let opcionesHtml = m.opciones.map(o => `
+                    <div class="d-flex justify-content-between align-items-center mb-2 p-2 bg-white border rounded shadow-sm">
+                        <span>${o.nombre} <span class="text-success fw-bold ms-2">+ $${o.precio_extra}</span></span>
+                        <button onclick="eliminarOpcion(${o.id_opcion})" class="btn btn-sm btn-link text-danger p-0">
+                            <i class="bi bi-x-circle-fill fs-5"></i>
+                        </button>
+                    </div>
+                `).join('');
+
+                lista.innerHTML += `
+                    <div class="col-md-6 mb-4">
+                        <div class="card h-100 bg-light border-0">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-start mb-3">
+                                    <h5 class="fw-bold mb-0 text-dark">${m.nombre}</h5>
+                                    <button onclick="eliminarModificador(${m.id_modificador})" class="btn btn-sm btn-outline-danger border-0">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                                <div class="mb-3 small text-uppercase text-muted fw-bold">
+                                    ${m.tipo} | ${m.obligatorio ? '<span class="text-danger">Obligatorio</span>' : 'Opcional'}
+                                </div>
+                                <div class="opciones-lista mb-3">${opcionesHtml}</div>
+                                
+                                <div class="input-group input-group-sm mt-3">
+                                    <input type="text" id="new_opt_name_${m.id_modificador}" class="form-control" placeholder="Nombre opción">
+                                    <input type="number" id="new_opt_price_${m.id_modificador}" class="form-control" placeholder="$ 0" style="max-width: 70px;">
+                                    <button onclick="guardarOpcion(${m.id_modificador})" class="btn btn-primary">
+                                        <i class="bi bi-plus-lg"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+        });
+}
+
+function guardarModificador() {
+    const nombre = document.getElementById('mod_nombre').value;
+    const tipo = document.getElementById('mod_tipo').value;
+    const obligatorio = document.getElementById('mod_obligatorio').checked;
+
+    if(!nombre) return alert("Nombre del grupo requerido");
+
+    fetch('/api/plato/modificador/guardar', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id_plato: ID_PLATO, nombre, tipo, obligatorio})
+    }).then(() => {
+        const modal = bootstrap.Modal.getInstance(document.getElementById('modalModificador'));
+        modal.hide();
+        document.getElementById('mod_nombre').value = '';
+        cargarModificadores();
+    });
+}
+
+function guardarOpcion(idMod) {
+    const nombre = document.getElementById(`new_opt_name_${idMod}`).value;
+    const precio = document.getElementById(`new_opt_price_${idMod}`).value;
+
+    if(!nombre) return alert("Nombre de la opción requerido");
+
+    fetch('/api/plato/opcion/guardar', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id_modificador: idMod, nombre, precio: precio || 0})
+    }).then(() => cargarModificadores());
+}
+
+function eliminarModificador(id) {
+    if(confirm('¿Borrar este grupo de opciones por completo?')) {
+        fetch(`/api/plato/modificador/eliminar/${id}`, {method: 'POST'}).then(() => cargarModificadores());
+    }
+}
+
+function eliminarOpcion(id) {
+    fetch(`/api/plato/opcion/eliminar/${id}`, {method: 'POST'}).then(() => cargarModificadores());
+}
+
+document.addEventListener('DOMContentLoaded', cargarModificadores);
+</script>
 {% endblock %}

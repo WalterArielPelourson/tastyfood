@@ -1,0 +1,200 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>👨‍🍳 Panel de Cocina</h2>
+        <div class="d-flex align-items-center">
+            <!-- NUEVO: Botón para habilitar el sonido (Requerido por navegadores) -->
+            <button id="btn-sonido" onclick="activarSonido()" class="btn btn-sm btn-outline-danger me-3 shadow-sm">
+                <i id="icono-sonido" class="bi bi-volume-mute-fill"></i> <span id="texto-sonido">Activar Sonido</span>
+            </button>
+
+            <span id="status-refresco" class="badge bg-success">Actualizado ahora</span>
+            <button onclick="cargarPedidos()" class="btn btn-sm btn-outline-secondary ms-2"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+    </div>
+
+    <!-- Contenedor donde se cargarán los pedidos -->
+    <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-4" id="contenedor-pedidos">
+        <div class="text-center w-100 mt-5">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Cargando...</span>
+            </div>
+            <p>Buscando pedidos en cocina...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Sonido para nuevos pedidos -->
+<audio id="audio-notificacion" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3"></audio>
+
+<script>
+    let ultimosIds = new Set();
+    let sonidoHabilitado = false; // Control de audio
+
+    // Función para desbloquear el audio mediante interacción del usuario
+    function activarSonido() {
+        const audio = document.getElementById('audio-notificacion');
+        const btn = document.getElementById('btn-sonido');
+        const icono = document.getElementById('icono-sonido');
+        const texto = document.getElementById('texto-sonido');
+
+        if (!sonidoHabilitado) {
+            sonidoHabilitado = true;
+            btn.classList.replace('btn-outline-danger', 'btn-success');
+            icono.classList.replace('bi-volume-mute-fill', 'bi-volume-up-fill');
+            texto.innerText = "Sonido Activo";
+            // Reproducir y pausar inmediatamente para "despertar" el audio en el navegador
+            audio.play().then(() => {
+                audio.pause();
+                audio.currentTime = 0;
+            }).catch(e => console.log("Audio desbloqueado"));
+        } else {
+            sonidoHabilitado = false;
+            btn.classList.replace('btn-success', 'btn-outline-danger');
+            icono.classList.replace('bi-volume-up-fill', 'bi-volume-mute-fill');
+            texto.innerText = "Activar Sonido";
+        }
+    }
+
+    function cargarPedidos() {
+        console.log("--- Iniciando consulta de cocina ---");
+        
+        fetch('/api/pedidos_pendientes_cocina')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`Error en servidor: ${response.status} ${response.statusText}`);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log("Pedidos recibidos del servidor:", data);
+                
+                const contenedor = document.getElementById('contenedor-pedidos');
+                const status = document.getElementById('status-refresco');
+                
+                // Si no hay pedidos
+                if (!data || data.length === 0) {
+                    contenedor.innerHTML = `
+                        <div class="alert alert-info w-100 text-center shadow-sm">
+                            <h4>No hay pedidos pendientes</h4>
+                            <p>Cuando un cliente confirme un pedido o un administrador lo valide, aparecerá aquí automáticamente.</p>
+                        </div>`;
+                } else {
+                    let html = '';
+                    let nuevosEncontrados = false;
+
+                    data.forEach(p => {
+                        // Lógica de notificación sonora
+                        if (!ultimosIds.has(p.id_pedido)) {
+                            if (ultimosIds.size > 0) {
+                                nuevosEncontrados = true;
+                                console.log(`Nuevo pedido detectado: #${p.id_pedido}`);
+                            }
+                            ultimosIds.add(p.id_pedido);
+                        }
+
+                        let claseEstado = p.estado_envio === 'En Preparación' ? 'border-warning' : 'border-primary';
+                        let badgeEstado = p.estado_envio === 'En Preparación' ? 'bg-warning text-dark' : 'bg-primary';
+
+                        html += `
+                            <div class="col">
+                                <div class="card h-100 shadow-sm ${claseEstado}" style="border-width: 2px;">
+                                    <div class="card-header d-flex justify-content-between align-items-center bg-transparent border-0 pt-3">
+                                        <span class="fw-bold fs-5">#${p.id_pedido} <span class="text-muted ms-1">(${p.hora_corta} hs)</span></span>
+                                        <span class="badge ${badgeEstado} p-2">${p.estado_envio}</span>
+                                    </div>
+                                    <div class="card-body">
+                                        <h5 class="card-title fw-bold mb-1">${p.cliente_nombre}</h5>
+                                        <p class="text-muted small mb-3">${p.es_envio ? '🛵 ENVÍO A DOMICILIO' : '🥡 RETIRA EN LOCAL'}</p>
+                                        <ul class="list-group list-group-flush shadow-sm rounded">
+                                            ${p.items.map(i => `
+                                                <li class="list-group-item bg-light border-bottom py-3">
+                                                    <div class="d-flex justify-content-between align-items-center">
+                                                        <span class="fs-4 fw-black text-primary" style="min-width: 45px;">${i.cantidad} x</span>
+                                                        <span class="fs-5 flex-grow-1 text-uppercase fw-bold ms-2">${i.nombre}</span>
+                                                    </div>
+                                                    
+                                                    <!-- NUEVO: MOSTRAR VARIANTES Y NOTAS EN ROJO PARA EL COCINERO -->
+                                                    ${i.detalle ? `
+                                                        <div class="mt-2 ps-4 text-danger fw-bold" style="font-size: 0.95rem; border-left: 3px solid #dc3545;">
+                                                            <i class="bi bi-arrow-return-right"></i> ${i.detalle}
+                                                        </div>` : ''}
+                                                </li>
+                                            `).join('')}
+                                        </ul>
+                                    </div>
+                                    <div class="card-footer d-grid gap-2 border-0 bg-white pb-3">
+                                        ${p.estado_envio === 'Recibido' || p.estado_envio === 'Pendiente de WhatsApp' ? 
+                                            `<button onclick="cambiarEstado(${p.id_pedido}, 'En Preparación')" class="btn btn-warning btn-lg fw-bold shadow-sm">COMENZAR A COCINAR</button>` : 
+                                            `<button onclick="cambiarEstado(${p.id_pedido}, 'En Camino')" class="btn btn-success btn-lg fw-bold shadow-sm">¡PEDIDO LISTO!</button>`
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    contenedor.innerHTML = html;
+                    
+                    if (nuevosEncontrados && sonidoHabilitado) {
+                        const audio = document.getElementById('audio-notificacion');
+                        audio.play().catch(e => console.warn("El navegador bloqueó el sonido."));
+                    }
+                }
+                
+                status.className = "badge bg-success";
+                status.innerText = "Actualizado: " + new Date().toLocaleTimeString();
+            })
+            .catch(error => {
+                console.error("Error cargando el panel de cocina:", error);
+                const status = document.getElementById('status-refresco');
+                status.className = "badge bg-danger";
+                status.innerText = "Error de conexión";
+                
+                document.getElementById('contenedor-pedidos').innerHTML = `
+                    <div class="alert alert-danger w-100 shadow">
+                        <h5>⚠️ Error al conectar con el servidor</h5>
+                        <p>${error.message}</p>
+                        <hr>
+                        <p class="mb-0 small">Verifica que estés logueado correctamente y que tu usuario tenga una empresa asignada.</p>
+                    </div>`;
+            });
+    }
+
+    function cambiarEstado(idPedido, nuevoEstado) {
+        console.log(`Cambiando pedido #${idPedido} a estado: ${nuevoEstado}`);
+        const formData = new FormData();
+        formData.append('nuevo_estado', nuevoEstado);
+
+        fetch(`/gestion/pedido/${idPedido}/actualizar_estado_envio`, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest'
+            }
+        })
+        .then(response => {
+            if (response.ok) {
+                cargarPedidos();
+            } else {
+                alert("No se pudo actualizar el estado. Revisa la consola.");
+            }
+        })
+        .catch(err => console.error("Error al cambiar estado:", err));
+    }
+
+    // Intervalo de 15 segundos
+    setInterval(cargarPedidos, 15000);
+    // Primera carga al abrir
+    document.addEventListener('DOMContentLoaded', cargarPedidos);
+</script>
+
+<style>
+    /* Estilos optimizados para tablets de cocina */
+    .card-title { font-size: 1.5rem; }
+    .fw-black { font-weight: 900; }
+    .list-group-item { padding: 12px 15px; }
+    .card { transition: transform 0.2s; }
+    .card:hover { transform: scale(1.01); }
+</style>
+{% endblock %}

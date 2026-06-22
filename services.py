@@ -74,38 +74,58 @@ def obtener_info_restaurante_google_maps(nombre_restaurante, api_key):
         print(f"Error al conectar con la API de Google Places (Details): {e}")
         return None
 
-def obtener_coordenadas_desde_direccion(direccion, api_key):
+def obtener_coordenadas(direccion):
     """
-    Convierte una dirección en latitud y longitud usando la API de Geocoding.
-    Retorna una tupla (lat, lon) o None si falla.
+    Busca coordenadas de forma GRATUITA usando OpenStreetMap (Nominatim).
+    No requiere API Key ni tarjeta de crédito.
     """
-    if not api_key or api_key == "YOUR_GOOGLE_MAPS_API_KEY":
-        print("Advertencia: API Key de Google Maps no configurada. Usando coordenadas de ejemplo.")
-        # Simula un resultado para una dirección de ejemplo
-        if "calle falsa 123" in direccion.lower():
-            return -34.6000, -58.4000 # Un punto cercano a la sucursal de ejemplo
-        else:
-            return -34.6100, -58.3900 # Otro punto cercano
-        
-    geocoding_url = "https://maps.googleapis.com/maps/api/geocode/json"
+    # 1. Limpieza y preparación de la dirección
+    # Eliminamos espacios extra y aseguramos que termine en Argentina
+    direccion_limpia = direccion.strip()
+    if not direccion_limpia.lower().endswith("argentina"):
+        direccion_busqueda = f"{direccion_limpia}, Argentina"
+    else:
+        direccion_busqueda = direccion_limpia
+    
+    # 2. URL de Nominatim (OpenStreetMap)
+    url = "https://nominatim.openstreetmap.org/search"
+    
+    # 3. Parámetros de la consulta
     params = {
-        "address": direccion,
-        "key": api_key
+        'q': direccion_busqueda,
+        'format': 'json',
+        'limit': 1,
+        'addressdetails': 1
     }
+    
+    # 4. Cabeceras (User-Agent es OBLIGATORIO para Nominatim)
+    headers = {
+        'User-Agent': 'RestauranteMultiSabor/1.0 (contacto@tusitio.com)' 
+    }
+    
     try:
-        response = requests.get(geocoding_url, params=params)
-        response.raise_for_status()
+        print(f"--- INICIANDO BÚSQUEDA GEOGRÁFICA ---")
+        print(f"Buscando dirección: {direccion_busqueda}")
+        
+        # Realizamos la petición con un timeout para que no se quede colgada la app
+        response = requests.get(url, params=params, headers=headers, timeout=10)
         data = response.json()
-
-        if data["status"] == "OK" and data["results"]:
-            location = data["results"][0]["geometry"]["location"]
-            return location["lat"], location["lng"]
+        
+        if data:
+            lat = float(data[0]['lat'])
+            lon = float(data[0]['lon'])
+            print(f"ÉXITO: Ubicación encontrada en Lat: {lat}, Lon: {lon}")
+            return lat, lon
         else:
-            print(f"No se pudieron obtener coordenadas para la dirección: '{direccion}'. Status: {data.get('status')}")
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"Error al conectar con la API de Google Geocoding: {e}")
-        return None
+            print(f"AVISO: Nominatim no encontró resultados para: {direccion_busqueda}")
+            
+    except Exception as e:
+        print(f"ERROR en conexión de mapas: {e}")
+        
+    # Si falla, devolvemos None para que el sistema sepa que no pudo validar la distancia
+    return None, None
+
+
 
 def calcular_distancia_cuadras(lat1, lon1, lat2, lon2):
     """

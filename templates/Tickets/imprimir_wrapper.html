@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Imprimir Pedido #{{ id_pedido }}</title>
+    <style>
+        body { margin: 0; padding: 0; display: flex; justify-content: center; background-color: #f0f0f0; }
+        @media print {
+            body { background-color: white; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body onload="window.print();">
+    <div style="padding: 20px;">
+        {{ ticket_body|safe }}
+    </div>
+</body>
+</html>
