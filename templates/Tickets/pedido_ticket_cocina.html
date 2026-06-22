@@ -1,0 +1,46 @@
+<div style="width: 100%; font-family: 'Courier New', Courier, monospace; color: #000;">
+    <div style="text-align: center; border-bottom: 2px solid #000; padding-bottom: 5px;">
+        <span style="font-size: 1.4rem; font-weight: bold;">COMANDA COCINA</span><br>
+        <span style="font-size: 1.2rem; font-weight: bold;">PEDIDO #{{ pedido.id_pedido }}</span>
+    </div>
+    
+    <div style="margin: 10px 0; font-size: 1rem;">
+        <strong>HORA ENTREGA:</strong> {{ pedido.horario_entrega.strftime('%H:%M') }} hs<br>
+        <strong>CLIENTE:</strong> {{ pedido.cliente_nombre }} {{ pedido.cliente_apellido }}<br>
+        <strong>ENTREGA:</strong> {{ 'DOMICILIO' if pedido.es_envio else 'RETIRA LOCAL' }}
+    </div>
+
+    <table style="width: 100%; border-collapse: collapse; font-size: 1.1rem;">
+        <thead>
+            <tr style="border-bottom: 1px solid #000;">
+                <th align="left" style="width: 15%;">CANT</th>
+                <th align="left">PRODUCTO / DETALLE</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in pedido.items %}
+            <tr style="border-bottom: 1px dashed #ccc;">
+                <td style="padding: 8px 0; font-weight: bold; font-size: 1.3rem;">{{ item.cantidad }}x</td>
+                <td style="padding: 8px 0;">
+                    <span style="font-weight: bold; text-transform: uppercase;">{{ item.plato_nombre }}</span>
+                    {% if item.detalles %}
+                        <br><small style="font-size: 0.9rem;">↳ {{ item.detalles }}</small>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    {% if pedido.notas %}
+    <div style="margin-top: 15px; padding: 5px; border: 1px solid #000;">
+        <strong>NOTAS DE PREPARACIÓN:</strong><br>
+        {{ pedido.notas }}
+    </div>
+    {% endif %}
+
+    <div style="text-align: center; margin-top: 20px;">
+        --------------------------<br>
+        ** FIN DE COMANDA **
+    </div>
+</div>

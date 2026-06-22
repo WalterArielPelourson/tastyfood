@@ -131,11 +131,18 @@
                                 {% if pedido.estado_envio == 'En Camino' %}Llegada Estimada{% else %}Horario Deseado{% endif %}
                             </label>
                             <span class="fw-bold">
-                                {% if pedido.estado_envio == 'En Camino' and pedido.eta_minutos %}
+                                <!--{% if pedido.estado_envio == 'En Camino' and pedido.eta_minutos %}
                                     Llega en {{ pedido.eta_minutos }} min
                                 {% else %}
                                     {{ pedido.horario_entrega.strftime('%H:%M') }} hs
-                                {% endif %}
+                                {% endif %}-->
+                                <!-- Esto verifica si es un objeto de fecha antes de intentar formatearlo -->
+                                {% if pedido.horario_entrega is string %}
+                                    {{ pedido.horario_entrega }}
+                                {% else %}
+                                    {{ pedido.horario_entrega.strftime('%H:%M') }} hs
+                                {% endif %} 
+
                             </span>
                         </div>
                     </div>

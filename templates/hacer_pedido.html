@@ -1,395 +1,347 @@
 {% extends "base.html" %}
 
-{% block title %}Hacer Pedido{% endblock %}
+{% block title %}Hacer Pedido | Tasty Food{% endblock %}
 
 {% block content %}
+<!-- ESTILOS TASTY FOOD -->
+<style>
+    .main-container { background: transparent !important; border: none !important; box-shadow: none !important; backdrop-filter: none !important; }
+    .h1, .h2, .h4, .h5, .h6, h1, h2, h3, h4, h5, h6, label, .form-label { color: #ffffff !important; text-shadow: 2px 2px 10px rgba(0,0,0,1) !important; font-weight: 800 !important; }
+    .tasty-glass-card { background: rgba(0, 0, 0, 0.75) !important; backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.15) !important; border-radius: 25px !important; color: white !important; }
+    
+    /* Inputs y Selectores */
+    .form-control, .form-select, .tasty-input, .input-group-text { background: rgba(255, 255, 255, 0.1) !important; border: 1px solid rgba(255, 255, 255, 0.2) !important; color: white !important; border-radius: 12px; }
+    .form-select option { background-color: #1a1a1a !important; color: white !important; }
+    .form-control::placeholder { color: rgba(255,255,255,0.5); }
+
+    /* Panel Lateral (Offcanvas) */
+    .offcanvas { background: #111 !important; color: white !important; border-left: 3px solid var(--primary-color) !important; width: 420px !important; z-index: 100001 !important; }
+    .offcanvas-header { border-bottom: 1px solid #333; }
+
+    /* Categorías */
+    .category-slider { background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(15px); border: 1px solid var(--primary-color); top: 65px !important; z-index: 1000; }
+    .category-pill { background: rgba(255, 255, 255, 0.1); color: white !important; border: 1px solid rgba(255,255,255,0.2); }
+    .category-pill.active { background: var(--primary-color) !important; border-color: white !important; }
+
+    @media (min-width: 768px) { .custom-fixed-left-column { position: sticky; top: 130px; max-height: 85vh; overflow-y: auto; padding-right: 10px; } }
+    .fw-900 { font-weight: 900; }
+    .fw-800 { font-weight: 800; }
+    .x-small { font-size: 0.75rem; }
+    .form-check-input:checked { background-color: var(--primary-color); border-color: var(--primary-color); }
+</style>
+
 <div class="container-fluid px-lg-5">
-   <!-- Encabezado Estilo App -->
+    <!-- Encabezado -->
     <div class="row mb-4 pt-3">
         <div class="col-12 text-center text-md-start">
-            <h1 class="fw-bold h2"><i class="fas fa-utensils text-danger me-2"></i>Realizar Pedido</h1>
-            <div class="text-muted d-flex flex-wrap justify-content-center justify-content-md-start align-items-center gap-2">
-                <span>
-                    <i class="fas fa-clock text-primary me-1"></i> 
-                    <strong>Horarios de hoy:</strong> 
-                    {% if HORARIOS_TURNOS and HORARIOS_TURNOS|length > 0 %}
-                        {% for turno in HORARIOS_TURNOS %}
-                            {{ turno.inicio }} a {{ turno.fin }} hs{% if not loop.last %} | {% endif %}
-                        {% endfor %}
-                    {% else %}
-                        <span class="text-danger">Cerrado por hoy</span>
-                    {% endif %}
-                </span>
-                
-                <span class="d-none d-md-inline text-secondary">|</span>
-                
-                <span>
-                    <i class="fas fa-map-marker-alt text-danger me-1"></i> 
-                    <strong>Envío:</strong> ${{ costo_envio | int }}
-                </span>
-            </div>
+            <h1 class="fw-900 h2 text-uppercase text-white"><i class="fas fa-utensils text-danger me-2"></i>Realizar Pedido</h1>
         </div>
     </div>
 
-  <!-- MENSAJE DE RESTAURANTE CERRADO -->
-    {% if not abierto %}
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="alert alert-danger shadow-sm border-0 rounded-4 p-4 text-center">
-                <i class="fas fa-store-alt-slash fa-3x mb-3"></i>
-                <h3 class="fw-bold">RESTAURANTE CERRADO</h3>
-                <p class="mb-2">En este momento no estamos recibiendo pedidos. Nuestros horarios de atención para hoy son:</p>
-                
-                <div class="d-flex justify-content-center flex-wrap gap-2 mb-3">
-                    {% if HORARIOS_TURNOS and HORARIOS_TURNOS|length > 0 %}
-                        {% for turno in HORARIOS_TURNOS %}
-                            <span class="badge bg-danger fs-6 px-3 py-2 rounded-pill shadow-sm">
-                                <i class="bi bi-clock me-1"></i> {{ turno.inicio }} a {{ turno.fin }} hs
-                            </span>
-                        {% endfor %}
-                    {% else %}
-                        <span class="badge bg-secondary fs-6 px-3 py-2 rounded-pill">Hoy permanecemos cerrados</span>
-                    {% endif %}
-                </div>
-                
-                <p class="small mb-0 text-dark">Podés ver nuestra carta y armar tu carrito, pero el botón de finalizar pedido está deshabilitado.</p>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-
-    <div class="row custom-layout-container {% if not abierto %}opacity-75{% endif %}" style="{% if not abierto %}pointer-events: none; user-select: none; filter: grayscale(0.5);{% endif %}">
-        
-        {# --- COLUMNA IZQUIERDA: LA CARTA --- #}
-        <div class="col-md-7 col-lg-8 order-2 order-md-1 custom-scroll-right-column">
+    {# --- COLUMNA IZQUIERDA: LA CARTA (OCUPA 7/12 o 8/12 del ancho) --- #}
+        <div class="col-md-7 col-lg-8 order-2 order-md-1">
             
-            <!-- Barra de Categorías (Sticky) -->
-            <div class="category-slider sticky-top py-2 mb-4 shadow-sm bg-white rounded-3 border-bottom">
-                <div class="d-flex overflow-auto px-2" id="category-nav" style="white-space: nowrap; scrollbar-width: none; -ms-overflow-style: none;">
+            <!-- BARRA DE CATEGORÍAS (Sticky) -->
+            <div class="category-slider sticky-top py-2 mb-4 shadow-lg rounded-4">
+                <div class="d-flex overflow-auto px-2" id="category-nav" style="white-space: nowrap; scrollbar-width: none;">
+                    
+                    <a href="javascript:void(0)" class="category-pill rounded-pill px-4 py-2 me-2 border border-secondary text-decoration-none small fw-800 text-white active" 
+                    onclick="filtrarRubro('todos', this)">
+                        TODOS
+                    </a>
+
+                    {% if promociones %}
+                    <a href="javascript:void(0)" class="category-pill rounded-pill px-4 py-2 me-2 border border-secondary text-decoration-none small fw-800 text-white" 
+                    onclick="filtrarRubro('promos', this)">
+                        🔥 PROMOS
+                    </a>
+                    {% endif %}
+
                     {% set rubros_vistos = [] %}
                     {% for plato in platos %}
                         {% if plato.rubro not in rubros_vistos %}
-                            {% set rubro_id = "sec-" + plato.rubro | lower | replace(' ', '-') | replace('/', '-') %}
-                            <a href="#{{ rubro_id }}" 
-                               class="category-pill rounded-pill px-3 py-1 me-2 border text-decoration-none small fw-bold"
-                               data-rubro="{{ rubro_id }}">
-                                {{ plato.rubro }}
+                            {% set rubro_slug = plato.rubro | lower | replace(' ', '-') | replace('/', '-') %}
+                            <a href="javascript:void(0)" class="category-pill rounded-pill px-4 py-2 me-2 border border-secondary text-decoration-none small fw-800 text-white" 
+                            onclick="filtrarRubro('{{ rubro_slug }}', this)">
+                                {{ plato.rubro | upper }}
                             </a>
                             {% set _ = rubros_vistos.append(plato.rubro) %}
                         {% endif %}
                     {% endfor %}
                 </div>
-            </div>
+            </div> <!-- /Cierre de barra de categorías -->
 
-            {% if platos %}
-                <div id="menu-acontainer">
-                    {% set current_rubro = "" %}
-                    {% for plato in platos %}
-                        
-                        {% if plato.rubro != current_rubro %}
-                            {% set rubro_id = "sec-" + plato.rubro | lower | replace(' ', '-') | replace('/', '-') %}
-                            <h4 class="fw-bold mt-4 mb-3 rubro-header" id="{{ rubro_id }}">{{ plato.rubro }}</h4>
-                            {% set current_rubro = plato.rubro %}
-                        {% endif %}
+            <!-- CONTENEDOR DE PRODUCTOS -->
+            <div id="menu-acontainer">
+                
+                {# --- SECCIÓN DE PROMOCIONES --- #}
+                {% if promociones %}
+                <h4 class="fw-900 mt-2 mb-3 rubro-header text-uppercase header-rubro" id="sec-promos" style="color: #ffc107 !important; border-left: 6px solid #ffc107; padding-left: 15px;">
+                    🔥 Promociones Especiales
+                </h4>
+                <div class="row g-3 mb-5">
+                    {% for promo in promociones %}
+                        <div class="col-md-6">
+                            <div class="card shadow-lg border-0 tasty-glass-card item-carta cat-promos" style="border: 1px solid rgba(255, 193, 7, 0.4) !important;">
+                                <div class="card-body d-flex align-items-center">
+                                    <div class="flex-grow-1 pe-3">
+                                        <div class="badge bg-warning text-dark mb-1 fw-900">COMBO</div>
+                                        <h5 class="mb-1 fw-800 text-white">{{ promo.nombre }}</h5>
+                                        <p class="card-text text-white-50 x-small mb-2">{{ promo.descripcion }}</p>
+                                        <h4 class="fw-900 text-warning mb-0">$ {{ "{:,.2f}".format(promo.precio_total) }}</h4>
 
-                        <!-- MODIFICACIÓN PUNTO 3: Agregada clase opacity-75 si no está disponible -->
-                        <div class="card mb-3 shadow-sm border-0 product-card {% if not plato.disponible %}opacity-75{% endif %}">
-                            <div class="card-body d-flex align-items-center">
-                                <div class="flex-grow-1 pe-3">
-                                    <h6 class="mb-1 fw-bold">{{ plato.nombre }}</h6>
-                                    <p class="card-text text-muted small text-truncate-2 mb-2">{{ plato.descripcion }}</p>
-                                    <h5 class="fw-bold text-dark mb-0">${{ "{:,.2f}".format(plato.precio) }}</h5>
-                                </div>
-
-                                <div class="product-image-wrapper me-3">
-                                    {% if plato.imagen %}
-                                        <img src="{{ url_for('static', filename='uploads/platos/' + plato.imagen) }}" 
-                                             alt="{{ plato.nombre }}" class="rounded-3 shadow-sm" 
-                                             style="width: 85px; height: 85px; object-fit: cover;">
-                                    {% else %}
-                                        <div class="bg-light rounded-3 d-flex align-items-center justify-content-center border" 
-                                             style="width: 85px; height: 85px;">
-                                            <i class="fas fa-image text-muted opacity-50"></i>
+                                         <!-- PUNTO 2: BLOQUE DE IMAGEN AÑADIDO -->
+                                        <div class="product-image-wrapper me-3">
+                                            {% if promo.imagen %}
+                                                <img src="{{ url_for('static', filename='uploads/platos/' + promo.imagen) }}" 
+                                                    alt="{{ promo.nombre }}" 
+                                                    class="rounded-4 border border-warning shadow" 
+                                                    style="width: 90px; height: 90px; object-fit: cover;">
+                                            {% else %}
+                                                <div class="bg-dark rounded-4 d-flex align-items-center justify-content-center border border-warning" 
+                                                    style="width: 90px; height: 90px;">
+                                                    <i class="fas fa-fire text-warning fs-2"></i>
+                                                </div>
+                                            {% endif %}
                                         </div>
-                                    {% endif %}
-                                </div>
 
-                                <!-- MODIFICACIÓN PUNTO 3: Lógica de botón Agregar vs Agotado -->
-                                <div class="quantity-control-wrapper text-center">
-                                    {% if plato.disponible %}
-                                        <button type="button" class="btn btn-danger rounded-pill px-3 fw-bold shadow-sm" 
-                                                {% if not abierto %}disabled{% endif %}
-                                                onclick="abrirModalPlato({{ plato.id_plato }}, '{{ plato.nombre }}', {{ plato.precio }}, '{{ plato.imagen if plato.imagen else '' }}')">
-                                            <i class="fas fa-plus me-1"></i> Agregar
-                                        </button>
-                                    {% else %}
-                                        <button type="button" class="btn btn-secondary rounded-pill px-3 fw-bold shadow-sm" disabled>
-                                            <i class="fas fa-times me-1"></i> Agotado
-                                        </button>
-                                        {% if plato.motivo_faltante %}
-                                            <div class="x-small text-danger mt-1 fw-bold" style="max-width: 100px; line-height: 1;">
-                                                Sin {{ plato.motivo_faltante }}
-                                            </div>
-                                        {% endif %}
-                                    {% endif %}
+                                    </div>
+                                    <button type="button" class="btn btn-warning rounded-pill px-3 fw-900 shadow" onclick="abrirOpcionesPromo({{ promo.id_promocion }})">ELEGIR</button>
                                 </div>
                             </div>
                         </div>
                     {% endfor %}
                 </div>
-            {% else %}
-                <div class="text-center py-5 bg-white rounded-4 shadow-sm">
-                    <p class="text-muted">Aún no hay platos en la carta. ¡Vuelve pronto!</p>
-                </div>
-            {% endif %}
-        </div>
+                {% endif %}
 
-        {# --- COLUMNA DERECHA: FORMULARIO Y CARRITO --- #}
+                {# --- SECCIÓN DE PLATOS NORMALES --- #}
+                {% set current_rubro = "" %}
+                {% for plato in platos %}
+                    {% set rubro_slug = plato.rubro | lower | replace(' ', '-') | replace('/', '-') %}
+
+                    {% if plato.rubro != current_rubro %}
+                        <h4 class="fw-900 mt-5 mb-3 text-uppercase header-rubro" 
+                            id="head-{{ rubro_slug }}"
+                            style="color: var(--primary-color) !important; border-left: 6px solid var(--primary-color); padding-left: 15px;">
+                            {{ plato.rubro }}
+                        </h4>
+                        {% set current_rubro = plato.rubro %}
+                    {% endif %}
+
+                    <div class="card mb-3 shadow-lg border-0 tasty-glass-card product-card item-carta cat-{{ rubro_slug }}">
+                        <div class="card-body d-flex align-items-center">
+                            <div class="flex-grow-1 pe-3">
+                                <h6 class="mb-1 fw-800 text-white text-uppercase">{{ plato.nombre }}</h6>
+                                <p class="card-text text-white-50 small mb-2">{{ plato.descripcion }}</p>
+                                
+                                <!-- LÓGICA DE PRECIO CON OFERTA RESPETANDO ESTILO TASTY -->
+                                <div class="d-flex align-items-center flex-wrap gap-2">
+                                    {% if plato.precio_oferta and plato.precio_oferta < plato.precio %}
+                                        <!-- Precio Base (Tachado) -->
+                                        <span class="small text-white-50 text-decoration-line-through fw-bold">
+                                            ${{ "{:,.2f}".format(plato.precio) }}
+                                        </span>
+                                        
+                                        <!-- Precio Oferta (Rojo Vibrante) -->
+                                        <h5 class="fw-900 text-danger mb-0 animate__animated animate__pulse animate__infinite">
+                                            ${{ "{:,.2f}".format(plato.precio_oferta) }}
+                                        </h5>
+                                        
+                                        <span class="badge bg-danger x-small fw-900 rounded-pill shadow-sm">OFERTA</span>
+                                    {% else %}
+                                        <!-- Precio Normal (Amarillo Warning) -->
+                                        <h5 class="fw-900 text-warning mb-0">
+                                            ${{ "{:,.2f}".format(plato.precio) }}
+                                        </h5>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            
+                            <div class="product-image-wrapper me-3">
+                                {% if plato.imagen %}
+                                    <img src="{{ url_for('static', filename='uploads/platos/' + plato.imagen) }}" 
+                                        class="rounded-4 shadow" style="width: 80px; height: 80px; object-fit: cover; border: 1px solid rgba(255,255,255,0.1);">
+                                {% endif %}
+                            </div>
+                            
+                            <!-- BOTÓN DE AGREGAR: SE PASA EL PRECIO CORRECTO (OFERTA O NORMAL) -->
+                            <button type="button" class="btn btn-danger rounded-pill px-3 fw-bold shadow" 
+                                    onclick="abrirOpcionesPlato({{ plato.id_plato }}, '{{ plato.nombre }}', {{ plato.precio_oferta if plato.precio_oferta else plato.precio }}, '{{ plato.imagen if plato.imagen else '' }}')"> 
+                                + 
+                            </button>
+                        </div>
+                    </div>
+                {% endfor %}
+            </div>
+        </div> {# --- CIERRE DE COLUMNA IZQUIERDA --- #}
+
+       {# --- COLUMNA DERECHA: CARRITO Y FORMULARIO --- #}
         <div class="col-md-5 col-lg-4 order-1 order-md-2 mb-4">
             <div class="custom-fixed-left-column">
                 
-                <!-- Resumen del Carrito -->
-                <div class="card shadow border-0 rounded-4 mb-4 overflow-hidden">
-                    <div class="card-header bg-dark text-white py-3">
-                        <h5 class="mb-0 fw-bold"><i class="fas fa-shopping-cart me-2"></i>Tu Carrito</h5>
+                <!-- CARRITO DE COMPRAS -->
+                <div class="card shadow-lg border-0 rounded-4 mb-4 tasty-glass-card">
+                    <div class="card-header bg-danger text-white py-3 border-0 text-center">
+                        <h5 class="mb-0 fw-900 text-uppercase"><i class="fas fa-shopping-cart me-2"></i>Tu Pedido</h5>
                     </div>
                     <div id="carrito-view" class="card-body p-0">
                         {% if carrito %}
-                            <ul class="list-group list-group-flush">
+                            <ul class="list-group list-group-flush bg-transparent">
                                 {% for key, item in carrito.items() %}
-                                    <li class="list-group-item py-3 bg-light-subtle">
+                                    <li class="list-group-item py-3 bg-transparent border-secondary text-white small">
                                         <div class="d-flex justify-content-between align-items-start">
-                                            <div class="small">
-                                                <span class="fw-bold">{{ item.cantidad }}x</span> {{ item.nombre }}
+                                            <div class="pe-2">
+                                                <span class="fw-900 text-warning">{{ item.cantidad }}x</span> 
+                                                <span class="fw-bold">{{ item.nombre }}</span>
                                                 {% if item.opciones_texto %}
-                                                    <div class="text-primary x-small mt-1">
-                                                        <i class="fas fa-check-circle me-1"></i>{{ item.opciones_texto }}
-                                                    </div>
-                                                {% endif %}
-                                                {% if item.notas %}
-                                                    <div class="text-muted x-small mt-1 italic">
-                                                        <i class="fas fa-comment-dots me-1"></i>"{{ item.notas }}"
-                                                    </div>
+                                                    <div class="text-info x-small mt-1 italic">{{ item.opciones_texto }}</div>
                                                 {% endif %}
                                             </div>
                                             <div class="text-end">
                                                 <span class="fw-bold d-block">${{ "{:,.2f}".format(item.precio_total_unitario * item.cantidad) }}</span>
-                                                <button type="button" class="btn btn-link btn-sm text-danger p-0 text-decoration-none" {% if not abierto %}disabled{% endif %} onclick="quitarDelCarrito('{{ key }}')">
-                                                    <i class="fas fa-trash-alt me-1"></i> Quitar
+                                                <!-- BOTÓN PARA ELIMINAR DE A UNO -->
+                                                <button type="button" class="btn btn-link btn-sm text-danger p-0 fw-900 text-decoration-none" 
+                                                        onclick="quitarDelCarrito('{{ key }}')">
+                                                    QUITAR 1
                                                 </button>
                                             </div>
                                         </div>
                                     </li>
                                 {% endfor %}
                             </ul>
-                            <div class="p-3 bg-white border-top">
-                                <div class="d-flex justify-content-between mb-1 small">
-                                    <span>Subtotal productos:</span>
-                                    <span class="fw-bold">${{ "{:,.2f}".format(total_carrito) }}</span>
-                                </div>
-                                
-                                <div class="d-flex justify-content-between mb-1 small text-success fw-bold" id="div-descuento" style="display: none;">
-                                    <span>Descuento Cupón:</span>
-                                    <span id="monto_descuento_display">-$0.00</span>
-                                </div>
-
-                                <div class="d-flex justify-content-between mb-1 small text-info fw-bold" id="div-descuento-puntos" style="display: none;">
-                                    <span>Descuento Puntos:</span>
-                                    <span id="monto_descuento_puntos_display">-$0.00</span>
-                                </div>
-
-                                <div class="d-flex justify-content-between mb-2 small">
-                                    <span>Costo de Envío:</span>
-                                    <span id="costo_envio_display" class="fw-bold">$0.00</span>
-                                </div>
-                                <div class="d-flex justify-content-between align-items-center pt-2 border-top">
-                                    <h5 class="fw-bold mb-0">TOTAL:</h5>
-                                    <h4 class="text-danger fw-bold mb-0" id="total-estimado-carrito">
-                                        ${{ "{:,.2f}".format(total_carrito) }}
-                                    </h4>
+                            <div class="p-3 bg-dark bg-opacity-30 border-top border-secondary">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h5 class="fw-900 text-white mb-0">TOTAL:</h5>
+                                    <h4 class="text-warning fw-900 mb-0" id="total-estimado-carrito">${{ "{:,.2f}".format(total_carrito) }}</h4>
                                 </div>
                                 <div class="mt-3 d-grid">
-                                    <button type="button" class="btn btn-outline-warning btn-sm fw-bold" {% if not abierto %}disabled{% endif %} id="clear-cart-btn" onclick="vaciarCarrito()"><i class="fas fa-broom me-2"></i>Vaciar Carrito</button>
+                                    <button type="button" class="btn btn-outline-warning btn-sm fw-bold rounded-pill" onclick="vaciarCarrito()">VACIAR TODO</button>
                                 </div>
                             </div>
                         {% else %}
-                            <div class="p-4 text-center">
-                                <p class="text-muted small mb-0">El carrito está vacío.<br>¡Agregá algo de la carta!</p>
+                            <div class="p-4 text-center text-white-50">
+                                <p class="small mb-0">Tu carrito está vacío.</p>
                             </div>
                         {% endif %}
                     </div>
                 </div>
 
-                <!-- Formulario de Pedido -->
-                <div class="card shadow border-0 rounded-4">
+                <!-- FORMULARIO DE DATOS DEL CLIENTE -->
+                <div class="card shadow-lg border-0 rounded-4 tasty-glass-card">
                     <div class="card-body p-4">
                         <form action="{{ url_for('hacer_pedido') }}" method="POST" id="pedido-form">
-                            <!-- Token CSRF  -->
-
-                            <h5 class="fw-bold mb-3"><i class="fas fa-user-edit me-2 text-danger"></i>Tus Datos</h5>
+                            <h5 class="fw-900 mb-4 text-danger border-bottom border-danger pb-2 text-uppercase">Tus Datos</h5>
                             
                             <div class="row g-2">
                                 <div class="col-6 mb-3">
                                     <label class="form-label small fw-bold">Nombre</label>
-                                    <input type="text" class="form-control form-control-sm rounded-3" name="nombre" required value="{{ request_form.get('nombre', '') }}">
+                                    <input type="text" class="form-control tasty-input" name="nombre" required value="{{ request_form.get('nombre', '') if request_form else '' }}">
                                 </div>
                                 <div class="col-6 mb-3">
                                     <label class="form-label small fw-bold">Apellido</label>
-                                    <input type="text" class="form-control form-control-sm rounded-3" name="apellido" required value="{{ request_form.get('apellido', '') }}">
+                                    <input type="text" class="form-control tasty-input" name="apellido" required value="{{ request_form.get('apellido', '') if request_form else '' }}">
                                 </div>
-                               <div class="mb-3">
-                                <label for="telefono" class="form-label fw-bold">Teléfono / WhatsApp</label>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label small fw-bold">WhatsApp (Celular)</label>
                                 <div class="input-group">
-                                    <span class="input-group-text bg-light">+54 9</span>
-                                    <input type="tel" 
-                                        name="telefono" 
-                                        id="telefono" 
-                                        class="form-control form-control-lg" 
-                                        placeholder="Ej: 1122334455" 
-                                        maxlength="10" 
-                                        pattern="[0-9]{10}" 
-                                        inputmode="numeric"
-                                        required 
-                                        value="{{ request_form.telefono if request_form else '' }}">
-                                </div>
-                                <!-- Mensaje de instrucción solicitado -->
-                                <div class="form-text text-danger fw-bold">
-                                    <i class="bi bi-exclamation-circle"></i> Importante: 10 dígitos (Sin el 0 inicial y sin el 15).
+                                    <span class="input-group-text bg-dark border-secondary text-white">+54 9</span>
+                                    <input type="tel" name="telefono" id="telefono" class="form-control tasty-input" placeholder="1122334455" maxlength="10" required value="{{ request_form.get('telefono', '') if request_form else '' }}">
                                 </div>
                             </div>
-                            </div>
 
-                            <!-- SECCIÓN DE PUNTOS CRM 
-                            <div id="seccion-puntos-crm" class="mb-3 p-3 border rounded-3 bg-white shadow-sm" style="border-left: 4px solid #0dcaf0 !important;">
-                                <label class="form-label small fw-bold"><i class="fas fa-star text-info me-1"></i> Club de Puntos MultiSabor</label>
-                                
-                                <div id="puntos-disponibles-view" style="display: none;">
-                                    <div class="alert alert-info p-2 x-small mb-2">
-                                        Tenés <strong id="lbl-puntos-cantidad">0</strong> puntos.
-                                        Equivale a <strong id="lbl-puntos-pesos">$0.00</strong> de descuento.
-                                    </div>
-                                    <button type="button" class="btn btn-info btn-sm w-100 fw-bold text-white" id="btn-aplicar-puntos" onclick="aplicarPuntos()" {% if not abierto %}disabled{% endif %}>Canjear puntos ahora</button>
-                                </div>
-
-                                <div id="puntos-aplicados-view" style="display: none;">
-                                    <div class="alert alert-primary p-2 x-small mb-0 d-flex justify-content-between align-items-center">
-                                        <span><i class="fas fa-check-circle me-1"></i> Descuento por puntos aplicado</span>
-                                        <button type="button" class="btn btn-link btn-sm text-danger p-0 text-decoration-none fw-bold" onclick="quitarPuntos()" {% if not abierto %}disabled{% endif %}>Quitar</button>
-                                    </div>
-                                </div>
-
+                            <!-- CLUB DE PUNTOS CRM 
+                            <div id="seccion-puntos-crm" class="mb-3 p-3 bg-white bg-opacity-10 border border-info border-start border-4 rounded-3 shadow">
+                                <label class="small fw-bold text-info text-uppercase mb-2 d-block"><i class="fas fa-star me-1"></i> Club de Puntos</label>
                                 <div id="puntos-consultar-view">
-                                    <button type="button" class="btn btn-outline-info btn-sm w-100 fw-bold" onclick="consultarPuntos()" {% if not abierto %}disabled{% endif %}>Consultar mis puntos</button>
+                                    <button type="button" class="btn btn-outline-info btn-sm w-100 fw-bold" onclick="consultarPuntos()">CONSULTAR MIS PUNTOS</button>
+                                </div>
+                                <div id="puntos-disponibles-view" style="display: none;">
+                                    <p class="x-small mb-1 text-white">Tenés <strong id="lbl-puntos-cantidad">0</strong> pts (= $<strong id="lbl-puntos-pesos">0</strong>)</p>
+                                    <button type="button" class="btn btn-info btn-sm w-100 fw-bold text-white shadow" onclick="aplicarPuntos()">CANJEAR AHORA</button>
+                                </div>
+                                <div id="puntos-aplicados-view" style="display: none;">
+                                    <div class="alert alert-primary p-2 x-small mb-0 d-flex justify-content-between align-items-center bg-primary bg-opacity-20 border-primary text-white">
+                                        <span>✓ Descuento aplicado</span>
+                                        <button type="button" class="btn btn-link btn-sm text-danger p-0 fw-bold" onclick="quitarPuntos()">QUITAR</button>
+                                    </div>
                                 </div>
                             </div>-->
 
-                            <div class="mb-3 form-check form-switch py-2 bg-light rounded-3 px-5">
-                                <input type="checkbox" class="form-check-input" id="es_envio_solicitado" name="es_envio_solicitado" onchange="toggleDireccionField()" {% if request_form.get('es_envio_solicitado') %}checked{% endif %}>
-                                <label class="form-check-label small fw-bold" for="es_envio_solicitado">¿Querés envío a domicilio?</label>
+                            <!-- ENVÍO -->
+                            <div class="form-check form-switch mb-3 py-2 bg-white bg-opacity-10 rounded-3 px-5 border border-secondary">
+                                <input type="checkbox" class="form-check-input" id="es_envio_solicitado" name="es_envio_solicitado" onchange="toggleDireccionField()" {% if request_form and request_form.get('es_envio_solicitado') %}checked{% endif %}>
+                                <label class="small fw-bold text-white">¿Querés envío a domicilio?</label>
                             </div>
 
-                            <div id="direccion_group" class="mb-3 p-3 bg-light rounded shadow-sm" style="display: none;">
+                            <!-- DIRECCIÓN -->
+                            <div id="direccion_group" class="mb-3 p-3 bg-dark bg-opacity-50 rounded-4 border border-secondary shadow" style="display: none;">
                                 <div class="row g-2">
                                     <div class="col-8">
                                         <label class="small fw-bold">Calle</label>
-                                        <input type="text" class="form-control" id="calle" name="calle" placeholder="Ej: Pinto" value="{{ request_form.get('calle', '') }}">
+                                        <input type="text" class="form-control tasty-input" id="calle" name="calle" placeholder="Calle" value="{{ request_form.get('calle', '') if request_form else '' }}">
                                     </div>
                                     <div class="col-4">
                                         <label class="small fw-bold">Altura</label>
-                                        <input type="text" class="form-control" id="altura" name="altura" placeholder="800" value="{{ request_form.get('altura', '') }}">
+                                        <input type="text" class="form-control tasty-input" id="altura" name="altura" placeholder="800" value="{{ request_form.get('altura', '') if request_form else '' }}">
                                     </div>
                                 </div>
                                 <div class="row g-2 mt-2">
                                     <div class="col-7">
                                         <label class="small fw-bold">Localidad</label>
-                                        <input type="text" class="form-control" id="localidad" name="localidad" placeholder="Tandil" value="{{ request_form.get('localidad', '') }}">
+                                        <input type="text" class="form-control tasty-input" id="localidad" name="localidad" placeholder="Localidad" value="{{ request_form.get('localidad', '') if request_form else '' }}">
                                     </div>
                                     <div class="col-5">
-                                        <label class="form-label small fw-bold">Piso/Depto</label>
-                                        <input type="text" class="form-control form-control-sm rounded-3" id="piso_depto" name="piso_depto" placeholder="4to B" value="{{ request_form.get('piso_depto', '') }}">
+                                        <label class="small fw-bold">Piso/Depto</label>
+                                        <input type="text" class="form-control tasty-input" name="piso_depto" placeholder="4to B" value="{{ request_form.get('piso_depto', '') if request_form else '' }}">
                                     </div>
                                 </div>
-                                <input type="hidden" name="provincia" id="provincia" value="Buenos Aires">
+                                <input type="hidden" name="provincia" value="Buenos Aires"> 
                             </div>
 
-                            <div class="mb-3">
-                                <label class="form-label small fw-bold">Horario de Entrega</label>
-                                
-                                {% if franjas_horarias %}
-                                    <select class="form-select form-select-sm rounded-3" name="horario_entrega" required>
-                                        <option value="">-- Seleccionar horario --</option>
-                                        {% for horario in franjas_horarias %}
-                                            <option value="{{ horario }}" {% if request_form.get('horario_entrega') == horario %}selected{% endif %}>
-                                                {{ horario }} hs
-                                            </option>
-                                        {% endfor %}
-                                    </select>
-                                {% else %}
-                                    <div class="alert alert-warning py-2 px-3 small rounded-3 mb-0">
-                                        <i class="fas fa-exclamation-circle me-1"></i> 
-                                        No hay horarios disponibles para lo que resta del día.
-                                    </div>
-                                    <!-- Input oculto para que el formulario no falle por falta del campo 'horario_entrega' -->
-                                    <input type="hidden" name="horario_entrega" value="Cerrado">
-                                {% endif %}
-                            </div>
-
-                            <!-- SECCIÓN DE PROMOCIONES OPCIONALES -->
-                            <div class="mb-4 p-3 bg-light border-start border-4 border-warning rounded-3 shadow-sm">
-                                <label class="form-label small fw-bold mb-2">🎁 Promociones para vos (Opcional)</label>
-                                
-                                {% if promos_disponibles %}
-                                    <div class="d-flex flex-wrap gap-2 mb-3">
-                                        {% for promo in promos_disponibles %}
-                                            <button type="button" 
-                                                    class="btn btn-sm {% if cupon_actual.codigo == promo.codigo %}btn-warning shadow-sm border-dark{% else %}btn-outline-dark{% endif %} rounded-pill px-3"
-                                                    onclick="aplicarPromoRapida('{{ promo.codigo }}')" {% if not abierto %}disabled{% endif %}>
-                                                <i class="fas fa-gift me-1"></i> {{ promo.codigo }}
-                                            </button>
-                                        {% endfor %}
-                                    </div>
-                                {% endif %}
-
-                                <div class="input-group input-group-sm">
-                                    <input type="text" id="input-cupon" class="form-control shadow-none" placeholder="Otro código de cupón" value="{{ cupon_actual.codigo if cupon_actual.codigo else '' }}" {% if not abierto %}disabled{% endif %}>
-                                    <button class="btn btn-dark fw-bold" type="button" onclick="aplicarCupon()" {% if not abierto %}disabled{% endif %}>Aplicar</button>
-                                </div>
-                                
-                                <div id="mensaje-cupon" class="x-small mt-2"></div>
-
-                                {% if cupon_actual.codigo %}
-                                    <div class="mt-2">
-                                        <button type="button" class="btn btn-link btn-sm text-danger p-0 x-small text-decoration-none" onclick="quitarPromo()" {% if not abierto %}disabled{% endif %}>
-                                            <i class="fas fa-times-circle me-1"></i> Quitar promoción aplicada
-                                        </button>
-                                    </div>
-                                {% endif %}
-                            </div>
-
+                            <!-- HORARIO -->
                             <div class="mb-4">
-                                <label class="form-label small fw-bold">Forma de Pago</label>
-                                <div class="payment-options border rounded-3 p-2 bg-light">
-                                    <div class="form-check small mb-2">
+                                <label class="small fw-bold text-white">Horario Deseado de Entrega</label>
+                                <select class="form-select tasty-input" name="horario_entrega" required>
+                                    {% if franjas_horarias %}
+                                        <option value="">-- Seleccionar --</option>
+                                        {% for h in franjas_horarias %}
+                                            <option value="{{ h }}" {% if request_form and request_form.get('horario_entrega') == h %}selected{% endif %}>{{ h }} hs</option>
+                                        {% endfor %}
+                                    {% else %}
+                                        <option value="Cerrado">Cerrado</option>
+                                    {% endif %}
+                                </select>
+                            </div>
+
+                            <!-- NUEVO: SECCIÓN FORMA DE PAGO -->
+                            <div class="mb-4">
+                                <label class="form-label small fw-bold text-white text-uppercase"><i class="fas fa-wallet me-1 text-danger"></i> Forma de Pago</label>
+                                <div class="p-3 rounded-4 border border-secondary" style="background: rgba(255,255,255,0.05);">
+                                    <div class="form-check mb-2">
                                         <input class="form-check-input" type="radio" name="forma_pago" id="pagoEfectivo" value="Efectivo" checked>
-                                        <label class="form-check-label" for="pagoEfectivo">Efectivo</label>
+                                        <label class="form-check-label text-white small" for="pagoEfectivo">
+                                            <i class="fas fa-money-bill-wave me-2 text-success"></i> Efectivo 
+                                        </label>
                                     </div>
-                                    <div class="form-check small mb-2">
-                                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoTarjeta" value="Tarjeta">
-                                        <label class="form-check-label" for="pagoTarjeta">Tarjeta (Posnet)</label>
-                                    </div>
-                                    <div class="form-check small mb-2">
+                                    <div class="form-check mb-2">
                                         <input class="form-check-input" type="radio" name="forma_pago" id="pagoMP" value="Mercado Pago">
-                                        <label class="form-check-label d-flex align-items-center" for="pagoMP">
-                                            <i class="bi bi-credit-card-2-back me-2 text-primary"></i> Mercado Pago / Tarjetas
+                                        <label class="form-check-label text-white small" for="pagoMP">
+                                            <i class="bi bi-qr-code-scan me-2 text-info"></i> Mercado Pago / Transferencia
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="radio" name="forma_pago" id="pagoTarjeta" value="Tarjeta (Posnet)">
+                                        <label class="form-check-label text-white small" for="pagoTarjeta">
+                                            <i class="fas fa-credit-card me-2 text-primary"></i> Tarjeta 
                                         </label>
                                     </div>
                                 </div>
                             </div>
 
-                            <button type="submit" class="btn btn-danger btn-lg w-100 rounded-pill fw-bold shadow" 
-                                    {% if not abierto %}disabled{% endif %}>
-                                <i class="fas fa-check-circle me-2"></i>
-                                {% if abierto %}Confirmar Pedido{% else %}Restaurante Cerrado{% endif %}
+                            <button type="submit" class="btn btn-danger btn-lg w-100 rounded-pill fw-900 shadow-lg py-3 animate__animated animate__pulse animate__infinite" {% if not abierto %}disabled{% endif %}>
+                                CONFIRMAR PEDIDO
                             </button>
                         </form>
                     </div>
@@ -399,126 +351,43 @@
     </div>
 </div>
 
-<!-- Carrito Flotante (Móviles) -->
-<div class="d-md-none fixed-bottom p-3 bg-white shadow-lg border-top" id="mobile-cart-bar" style="z-index: 1050; display: none;">
-    <button class="btn btn-danger w-100 py-3 rounded-4 d-flex justify-content-between align-items-center" onclick="document.querySelector('.custom-fixed-left-column').scrollIntoView({behavior: 'smooth'})">
-        <span class="fw-bold"><i class="fas fa-shopping-bag me-2"></i>Ver mi pedido</span>
-        <span class="fw-bold" id="mobile-cart-total">$0.00</span>
-    </button>
-</div>
-
-<!-- MODAL DE SELECCIÓN DE OPCIONES -->
-<div class="modal fade" id="modalPlatoOpciones" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow-lg">
-            <div class="modal-header border-0 pb-0">
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div id="contenido-modal-plato">
-                <!-- Se carga dinámicamente -->
-            </div>
-        </div>
+<!-- PANEL LATERAL PARA OPCIONES (PLATOS Y PROMOS) -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="offcanvasPlato">
+    <div class="offcanvas-header">
+        <h5 class="offcanvas-title fw-900 text-uppercase">Configurar Selección</h5>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas"></button>
     </div>
+    <div class="offcanvas-body" id="contenido-offcanvas-plato"></div>
 </div>
-
-<style>
-    .opcion-item { cursor: pointer; transition: all 0.2s; border: 2px solid #f8f9fa; }
-    .opcion-item:hover { background-color: #f0f7ff; border-color: #cfe2ff; }
-    .form-check-input:checked + .form-check-label { font-weight: bold; color: #0d6efd; }
-    .img-modal-plato { width: 100%; height: 200px; object-fit: cover; }
-    .custom-layout-container { min-height: 80vh; }
-    
-    /* CATEGORÍAS */
-    .category-slider { z-index: 1020; background: #fff; top: 60px; }
-    .category-pill { background: #f8f9fa; color: #333; transition: 0.3s; border: 1px solid #eee !important; cursor: pointer; }
-    .category-pill:hover { background: #eee; }
-    .category-pill.active { background: #dc3545 !important; color: #fff !important; border-color: #dc3545 !important; }
-
-    /* Ajuste para anclas de rubro */
-    .rubro-header { scroll-margin-top: 130px; }
-
-    .product-card { border-radius: 16px; transition: 0.2s; border: 1px solid #f0f0f0 !important; }
-    .product-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important; }
-    @media (min-width: 768px) { .custom-fixed-left-column { position: sticky; top: 70px; max-height: calc(100vh - 100px); overflow-y: auto; padding-bottom: 20px; } }
-    .text-truncate-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-    .x-small { font-size: 0.75rem; }
-    .italic { font-style: italic; }
-
-    /* ESTILO CUANDO ESTÁ CERRADO */
-    {% if not abierto %}
-    .custom-layout-container { 
-        filter: grayscale(0.8);
-        pointer-events: none;
-    }
-    .custom-scroll-right-column {
-        pointer-events: auto !important;
-        cursor: not-allowed;
-    }
-    .product-card button { display: none; }
-    {% endif %}
-</style>
-
 {% endblock %}
 
+
+
+
 {% block scripts %}
+
 <script>
-    let modalBootstrap;
-    const direccionGroup = document.getElementById('direccion_group');
-    const esEnvioCheckbox = document.getElementById('es_envio_solicitado');
+    // Variables globales para componentes de Bootstrap
+    let offcanvasBootstrap;
     const totalEstimadoCarrito = document.getElementById('total-estimado-carrito');
-    const mobileCartBar = document.getElementById('mobile-cart-bar');
-    const mobileCartTotal = document.getElementById('mobile-cart-total');
 
-    let baseTotalProductos = {{ total_carrito | round(2) }}; 
-    const COSTO_ENVIO_CONFIG = {{ costo_envio | round(2) }};
-    
-    // DESCUENTOS
-    let descuentoCupon = {{ cupon_actual.descuento | default(0) }};
-    let descuentoPuntos = {{ puntos_actual.descuento_pesos | default(0) }};
-
-    function toggleDireccionField() {
-        direccionGroup.style.display = esEnvioCheckbox.checked ? 'block' : 'none';
-        updateOrderSummary();
-    }
-
+    // 1. ACTUALIZACIÓN VISUAL DEL TOTAL GENERAL (CARRITO)
     function updateOrderSummary() {
-        const envio = esEnvioCheckbox.checked ? COSTO_ENVIO_CONFIG : 0;
-        const total = (baseTotalProductos - descuentoCupon - descuentoPuntos) + envio;
-        
-        // Actualizar vistas de descuentos
-        const divDescCupon = document.getElementById('div-descuento');
-        const divDescPuntos = document.getElementById('div-descuento-puntos');
-
-        if(descuentoCupon > 0) {
-            divDescCupon.style.display = 'flex';
-            document.getElementById('monto_descuento_display').innerText = `-$${descuentoCupon.toFixed(2)}`;
-        } else { divDescCupon.style.display = 'none'; }
-
-        if(descuentoPuntos > 0) {
-            divDescPuntos.style.display = 'flex';
-            document.getElementById('monto_descuento_puntos_display').innerText = `-$${descuentoPuntos.toFixed(2)}`;
-        } else { divDescPuntos.style.display = 'none'; }
-
-        document.getElementById('costo_envio_display').textContent = `$${envio.toFixed(2)}`;
-        totalEstimadoCarrito.innerHTML = `<strong>$${total.toLocaleString('es-AR', {minimumFractionDigits: 2})}</strong>`;
-        
-        if (mobileCartTotal) mobileCartTotal.textContent = `$${total.toLocaleString('es-AR', {minimumFractionDigits: 2})}`;
-        if (baseTotalProductos > 0) mobileCartBar.style.display = 'block';
+        const total = {{ total_carrito | default(0) | round(2) }};
+        if (totalEstimadoCarrito) {
+            totalEstimadoCarrito.innerHTML = `$${total.toLocaleString('es-AR', {minimumFractionDigits: 2})}`;
+        }
     }
 
-    // --- LÓGICA DE PUNTOS CRM ---
+    // 2. LÓGICA DE PUNTOS CRM
     window.puntosDisponiblesParaCanje = 0;
-
     function consultarPuntos() {
-        const tel = document.querySelector('input[name="telefono"]').value;
+        const tel = document.getElementById('telefono').value;
         if(!tel) { alert("Ingresá tu teléfono primero para buscar tus puntos."); return; }
-
+        
         fetch('/api/consultar_puntos', {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({telefono: tel})
         })
         .then(res => res.json())
@@ -536,316 +405,314 @@
     }
 
     function aplicarPuntos() {
-        const tel = document.querySelector('input[name="telefono"]').value;
+        const tel = document.getElementById('telefono').value;
         fetch('/api/aplicar_puntos', {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                
-            },
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({telefono: tel, puntos: window.puntosDisponiblesParaCanje})
         }).then(() => window.location.reload());
     }
 
     function quitarPuntos() {
-        fetch('/api/quitar_puntos', { 
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
+        fetch('/api/quitar_puntos', { method: 'POST' }).then(() => window.location.reload());
+    }
+
+    // --- 3. LÓGICA DE PROMOCIONES (FIX DEFINITIVO: MODO COMBO VS MODO UNIDAD) ---
+    let pConf = { fijo: 0, min: 1, max: 1, precio: 0, id: 0 }; 
+
+    function abrirOpcionesPromo(idPromo) {
+        const contenedor = document.getElementById('contenido-offcanvas-plato');
+        contenedor.innerHTML = '<div class="p-5 text-center"><div class="spinner-border text-warning"></div></div>';
+        offcanvasBootstrap.show();
+        
+        fetch(`/api/promocion/${idPromo}/datos`)
+            .then(res => res.json())
+            .then(data => {
+                // Sincronización estricta de tipos de datos desde la API
+                pConf.id = data.promo.id_promocion;
+                pConf.fijo = parseInt(data.promo.es_combo_fijo); // 1 = Combo Fijo, 0 = Por Unidad
+                pConf.min = parseInt(data.promo.min_items);
+                pConf.max = parseInt(data.promo.max_items);
+                pConf.precio = parseFloat(data.promo.precio_total);
                 
-            }
-        }).then(() => window.location.reload());
-    }
+                let badgeTexto = "";
+                let badgeClase = "";
 
-    // --- LÓGICA DE CUPONES ---
-    function aplicarPromoRapida(codigo) {
-        document.getElementById('input-cupon').value = codigo;
-        aplicarCupon();
-    }
+                if (pConf.fijo === 1) {
+                    badgeTexto = `MODO COMBO: ELEGÍ ENTRE ${pConf.min} Y ${pConf.max} PLATOS`;
+                    badgeClase = "bg-info text-dark";
+                } else {
+                    badgeTexto = `PRECIO POR UNIDAD: $${pConf.precio.toFixed(2)}`;
+                    badgeClase = "bg-warning text-dark";
+                }
 
-    function aplicarCupon() {
-        const codigo = document.getElementById('input-cupon').value;
-        const telefono = document.querySelector('input[name="telefono"]').value;
-        if (!codigo) return;
+                let html = `
+                    <div class="p-2 text-center">
+                        <h3 class="fw-900 mb-1 text-white">${data.promo.nombre}</h3>
+                        <p class="text-white-50 small mb-2">${data.promo.descripcion}</p>
+                        <div class="badge ${badgeClase} mb-4 fw-900 fs-6 shadow-sm px-3 py-2">
+                            ${badgeTexto}
+                        </div>
 
-        fetch('/api/validar_cupon', {
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
+                        <form id="form-eleccion-promo">
+                            <input type="hidden" id="pid_promo_final" value="${pConf.id}">
+                            <div class="text-start">
+                                <h6 class="fw-bold mb-3 text-warning text-uppercase small">Armá tu selección:</h6>`;
                 
-            },
-            body: JSON.stringify({
-                codigo: codigo, 
-                total: baseTotalProductos,
-                telefono: telefono
-            })
-        })
-        .then(res => res.json())
-        .then(data => {
-            const mensaje = document.getElementById('mensaje-cupon');
-            if (data.success) {
-                mensaje.className = "x-small mt-2 text-success fw-bold";
-                mensaje.innerText = data.message;
-                setTimeout(() => window.location.reload(), 800);
-            } else {
-                mensaje.className = "x-small mt-2 text-danger";
-                mensaje.innerText = data.message;
-            }
-        });
-    }
+                data.platos.forEach(p => {
+                    html += `
+                        <div class="d-flex align-items-center justify-content-between bg-white bg-opacity-10 p-3 mb-2 rounded-3 border border-secondary shadow-sm">
+                            <div class="flex-grow-1 pe-2">
+                                <span class="fw-bold text-white d-block">${p.nombre}</span>
+                            </div>
+                            <div class="input-group" style="width: 110px;">
+                                <button class="btn btn-outline-light btn-sm" type="button" onclick="cambiarCantItemPromo(${p.id_plato}, -1)">-</button>
+                                <input type="number" id="qty_p_promo_${p.id_plato}" 
+                                    class="form-control text-center bg-transparent text-white border-0 fw-bold p-0 input-qty-promo" 
+                                    data-nombre="${p.nombre}" value="0" readonly>
+                                <button class="btn btn-outline-light btn-sm" type="button" onclick="cambiarCantItemPromo(${p.id_plato}, 1)">+</button>
+                            </div>
+                        </div>`;
+                });
 
-    function quitarPromo() {
-        if(confirm("¿Seguro que querés quitar el descuento?")) {
-            fetch('/api/limpiar_cupon', { 
-                method: 'POST', 
-                headers: { 
-                    'Content-Type': 'application/json',
-                    
-                } 
-            })
-            .then(() => {
-                document.getElementById('input-cupon').value = "";
-                window.location.reload(); 
+                html += `</div>
+                    <div class="mt-4 p-3 bg-dark bg-opacity-50 rounded-4 border border-secondary shadow">
+                        <div class="d-flex justify-content-between align-items-center mb-3 text-white">
+                            <span class="small fw-bold text-uppercase">Total unidades:</span>
+                            <span id="total-qty-promo" class="fw-900 fs-5">0</span>
+                        </div>
+                        <button type="button" id="btn-add-promo" onclick="confirmarPromoAlCarrito()" class="btn btn-warning w-100 fw-900 rounded-pill py-3 shadow">
+                            AÑADIR <span id="total-precio-promo-display">$0.00</span>
+                        </button>
+                    </div>
+                    </form></div>`;
+                contenedor.innerHTML = html;
             });
+    }
+
+    function cambiarCantItemPromo(idPlato, delta) {
+        const input = document.getElementById(`qty_p_promo_${idPlato}`);
+        
+        // 1. Calculamos la suma de todos los platos seleccionados actualmente
+        let sumaActual = 0;
+        document.querySelectorAll('.input-qty-promo').forEach(el => sumaActual += parseInt(el.value));
+
+        // 2. BLOQUEO DE MÁXIMO (Solo si es MODO COMBO FIJO)
+        if (pConf.fijo === 1 && delta > 0 && sumaActual >= pConf.max) {
+            alert(`Límite alcanzado: Este combo permite un máximo de ${pConf.max} productos.`);
+            return; // Detenemos la función: No suma.
+        }
+
+        let nuevoValorUnidad = parseInt(input.value) + delta;
+        if (nuevoValorUnidad >= 0) {
+            input.value = nuevoValorUnidad;
+            
+            // 3. Volvemos a calcular la suma total después del cambio
+            let sumaFinal = 0;
+            document.querySelectorAll('.input-qty-promo').forEach(el => sumaFinal += parseInt(el.value));
+            document.getElementById('total-qty-promo').innerText = sumaFinal;
+
+            // 4. LÓGICA DE PRECIO SOLICITADA
+            let precioCalculado = 0;
+            if (pConf.fijo === 1) {
+                // MODO COMBO: Si hay al menos un producto elegido, el precio es el total plano
+                precioCalculado = sumaFinal > 0 ? pConf.precio : 0;
+            } else {
+                // MODO UNIDAD: El precio se multiplica por cada unidad seleccionada
+                precioCalculado = sumaFinal * pConf.precio;
+            }
+            
+            document.getElementById('total-precio-promo-display').innerText = '$' + precioCalculado.toLocaleString('es-AR', {minimumFractionDigits: 2});
         }
     }
 
-    // --- LÓGICA DE VARIANTES Y CARRITO ---
-    function abrirModalPlato(id, nombre, precio, imagen) {
-        const contenedor = document.getElementById('contenido-modal-plato');
+    function confirmarPromoAlCarrito() {
+        let seleccionados = [];
+        let sumaFinalUnidades = 0;
+
+        document.querySelectorAll('.input-qty-promo').forEach(input => {
+            let cant = parseInt(input.value);
+            if (cant > 0) {
+                seleccionados.push(`${cant}x ${input.getAttribute('data-nombre')}`);
+                sumaFinalUnidades += cant;
+            }
+        });
+
+        // 5. VALIDACIÓN DE MÍNIMO (Solo si es MODO COMBO FIJO)
+        if (pConf.fijo === 1 && sumaFinalUnidades < pConf.min) {
+            alert(`Selección insuficiente: Debes elegir al menos ${pConf.min} productos para completar este combo.`);
+            return;
+        }
+
+        if (sumaFinalUnidades === 0) {
+            alert("Por favor, seleccioná al menos un producto.");
+            return;
+        }
+        
+        fetch('/api/update_cart_complex', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                plato_id: null, 
+                id_promocion: pConf.id, 
+                // SI ES FIJO: Mandamos cantidad 1 (el precio de la promo ya es el total).
+                // SI NO ES FIJO: Mandamos la suma de unidades elegidas para que se multipliquen.
+                cantidad: (pConf.fijo === 1) ? 1 : sumaFinalUnidades, 
+                notas: "Elección: " + seleccionados.join(", "), 
+                opciones: [] 
+            })
+        }).then(() => window.location.reload());
+    }
+
+
+    // 4. LÓGICA DE PLATOS INDIVIDUALES (Panel Lateral)
+    function abrirOpcionesPlato(id, nombre, precio, imagen) {
+        const contenedor = document.getElementById('contenido-offcanvas-plato');
         contenedor.innerHTML = '<div class="p-5 text-center"><div class="spinner-border text-danger"></div></div>';
-        modalBootstrap.show();
+        offcanvasBootstrap.show();
 
         fetch(`/api/plato/${id}/modificadores`)
             .then(res => res.json())
             .then(modificadores => {
-                let html = `
-                    <div class="p-3 pt-0">
-                        ${imagen ? `<img src="/static/uploads/platos/${imagen}" class="img-modal-plato rounded-3 mb-3">` : ''}
-                        <h3 class="fw-bold mb-1">${nombre}</h3>
-                        <p class="text-danger fs-5 fw-bold mb-4">$${precio.toFixed(2)}</p>
-                        <form id="form-opciones-plato">
-                            <input type="hidden" name="plato_id" value="${id}">
-                            <input type="hidden" id="precio_base_modal" value="${precio}">`;
-
+                let html = `<div class="p-2 text-center">
+                    ${imagen ? `<img src="/static/uploads/platos/${imagen}" class="w-100 rounded-4 mb-3 shadow" style="height:150px; object-fit:cover;">` : ''}
+                    <h4 class="fw-900 mb-1 text-white">${nombre}</h4>
+                    <p class="text-warning fs-5 fw-900 mb-3">$${precio.toFixed(2)}</p>
+                    <form id="form-opciones-plato"><input type="hidden" name="plato_id" value="${id}">`;
+                
                 modificadores.forEach(mod => {
-                    html += `
-                        <div class="mb-4 modificador-grupo" data-nombre="${mod.nombre}" data-obligatorio="${mod.obligatorio}">
-                            <div class="d-flex justify-content-between align-items-center mb-2">
-                                <h6 class="fw-bold mb-0">${mod.nombre}</h6>
-                                ${mod.obligatorio ? '<span class="badge bg-danger">OBLIGATORIO</span>' : '<span class="badge bg-light text-dark border">OPCIONAL</span>'}
-                            </div>`;
+                    html += `<div class="mb-3 text-start"><h6 class="fw-bold mb-2 small text-white-50 text-uppercase">${mod.nombre}</h6>`;
                     mod.opciones.forEach(opt => {
-                        const type = mod.tipo === 'radio' ? 'radio' : 'checkbox';
-                        const name = mod.tipo === 'radio' ? `mod_${mod.id_modificador}` : `opt_${opt.id_opcion}`;
                         html += `
-                            <div class="form-check opcion-item p-3 mb-2 rounded border">
-                                <input class="form-check-input ms-0 me-2" type="${type}" name="${name}" id="opt_${opt.id_opcion}" value="${opt.id_opcion}" data-precio-extra="${opt.precio_extra}">
-                                <label class="form-check-label d-flex justify-content-between w-100" for="opt_${opt.id_opcion}">
-                                    <span>${opt.nombre}</span>
-                                    <span class="text-success">${opt.precio_extra > 0 ? '+ $'+opt.precio_extra : ''}</span>
-                                </label>
+                            <div class="form-check bg-white bg-opacity-10 p-2 mb-1 rounded-3 border border-secondary small">
+                                <input class="form-check-input ms-0 me-2" type="${mod.tipo === 'radio' ? 'radio' : 'checkbox'}" name="opt" value="${opt.id_opcion}" id="opt_${opt.id_opcion}">
+                                <label class="form-check-label w-100 text-white" for="opt_${opt.id_opcion}">${opt.nombre}</label>
                             </div>`;
                     });
                     html += `</div>`;
                 });
 
-                html += `
-                            <div class="mb-3">
-                                <label class="form-label fw-bold small">Notas adicionales:</label>
-                                <textarea name="notas" class="form-control" placeholder="Ej: Sin cebolla..."></textarea>
-                            </div>
-                            <div class="d-flex align-items-center justify-content-between mt-4 bg-light p-3 rounded-3">
-                                <div class="input-group" style="width: 120px;">
-                                    <button class="btn btn-outline-secondary" type="button" onclick="cambiarCantModal(-1)">-</button>
-                                    <input type="number" id="cant-modal" name="cantidad" class="form-control text-center border-0 bg-transparent fw-bold" value="1" readonly>
-                                    <button class="btn btn-outline-secondary" type="button" onclick="cambiarCantModal(1)">+</button>
-                                </div>
-                                <button type="button" onclick="confirmarAgregarAlCarrito()" class="btn btn-danger btn-lg px-4 fw-bold">
-                                    AGREGAR $ <span id="total-modal">${precio.toFixed(2)}</span>
-                                </button>
-                            </div>
-                        </form>
-                    </div>`;
+                html += `<textarea name="notas" class="form-control tasty-input mb-3" placeholder="Notas adicionales..."></textarea>
+                    <div class="d-flex align-items-center justify-content-between mt-4">
+                        <div class="input-group" style="width: 110px;">
+                            <button class="btn btn-outline-light btn-sm" type="button" onclick="cambiarCantPlatoIndividual(-1)">-</button>
+                            <input type="number" id="cant-individual" class="form-control text-center bg-transparent text-white border-0 fw-bold p-0" value="1" readonly>
+                            <button class="btn btn-outline-light btn-sm" type="button" onclick="cambiarCantPlatoIndividual(1)">+</button>
+                        </div>
+                        <button type="button" onclick="confirmarPlatoAlCarrito()" class="btn btn-danger px-4 fw-900 rounded-pill shadow">AÑADIR AL PEDIDO</button>
+                    </div>
+                    </form></div>`;
                 contenedor.innerHTML = html;
-                document.getElementById('form-opciones-plato').addEventListener('change', actualizarPrecioModal);
             });
     }
 
-    function cambiarCantModal(v) {
-        const i = document.getElementById('cant-modal');
-        let n = parseInt(i.value) + v;
-        if (n >= 1) { i.value = n; actualizarPrecioModal(); }
+    function cambiarCantPlatoIndividual(delta) {
+        const input = document.getElementById('cant-individual');
+        let nuevo = parseInt(input.value) + delta;
+        if (nuevo >= 1) input.value = nuevo;
     }
 
-    function actualizarPrecioModal() {
-        const base = parseFloat(document.getElementById('precio_base_modal').value);
-        const cant = parseInt(document.getElementById('cant-modal').value);
-        let extras = 0;
-        document.querySelectorAll('#form-opciones-plato input:checked').forEach(s => {
-            extras += parseFloat(s.getAttribute('data-precio-extra') || 0);
-        });
-        document.getElementById('total-modal').innerText = ((base + extras) * cant).toFixed(2);
-    }
-
-    function confirmarAgregarAlCarrito() {
-        const grupos = document.querySelectorAll('.modificador-grupo[data-obligatorio="1"]');
-        for (let g of grupos) {
-            if (g.querySelectorAll('input:checked').length === 0) {
-                alert(`Seleccioná una opción para: ${g.getAttribute('data-nombre')}`);
-                return;
-            }
-        }
-        const opciones = [];
+    function confirmarPlatoAlCarrito() {
+        const opciones = []; 
         document.querySelectorAll('#form-opciones-plato input:checked').forEach(i => opciones.push(parseInt(i.value)));
+        const notas = document.querySelector('textarea[name="notas"]').value;
+        const cant = document.getElementById('cant-individual').value;
         
         fetch('/api/update_cart_complex', {
             method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-               
-            },
-            body: JSON.stringify({
-                plato_id: document.querySelector('input[name="plato_id"]').value,
-                cantidad: document.getElementById('cant-modal').value,
-                notas: document.querySelector('textarea[name="notas"]').value,
-                opciones: opciones
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                plato_id: document.querySelector('input[name="plato_id"]').value, 
+                cantidad: cant, 
+                notas: notas, 
+                opciones: opciones 
             })
-        }).then(res => {
-            if(res.ok) window.location.reload();
-            else return res.json().then(err => alert(err.message));
+        }).then(() => window.location.reload());
+    }
+
+    // 5. UTILIDADES (CARRITO Y FORMULARIO)
+    function quitarDelCarrito(key) {
+        // Nueva lógica para restar de a uno
+        fetch('/api/cart/decrease', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cart_key: key })
+        }).then(res => res.json()).then(data => {
+            if(data.success) window.location.reload();
         });
     }
 
     function vaciarCarrito() {
-        if(confirm("¿Seguro que querés vaciar el carrito?")) {
-            fetch('/api/clear_cart', { 
-                method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    
-                }
-            }).then(() => window.location.reload());
+        if(confirm("¿Estás seguro de vaciar el pedido completo?")) {
+            fetch('/api/clear_cart', { method: 'POST' }).then(() => window.location.reload());
         }
     }
 
-    function quitarDelCarrito(key) {
-        // Debes implementar una API específica para borrar un item, o vaciar todo
-        fetch('/api/clear_cart', { 
-            method: 'POST',
-            headers: { 
-                'Content-Type': 'application/json',
-                
-            }
-        }).then(() => window.location.reload());
+    function toggleDireccionField() {
+        const check = document.getElementById('es_envio_solicitado');
+        const group = document.getElementById('direccion_group');
+        if (group && check) group.style.display = check.checked ? 'block' : 'none';
     }
 
-    // --- LÓGICA DE FILTROS POR RUBRO (SCROLLSPY) ---
-    function initScrollSpy() {
-        const categoryLinks = document.querySelectorAll('.category-pill');
-        const sections = document.querySelectorAll('.rubro-header');
-        const nav = document.getElementById('category-nav');
-
-        categoryLinks.forEach(link => {
-            link.addEventListener('click', function(e) {
-                e.preventDefault();
-                const targetId = this.getAttribute('href');
-                const targetSection = document.querySelector(targetId);
-                if (targetSection) targetSection.scrollIntoView({ behavior: 'smooth' });
-            });
-        });
-
-        const observerOptions = {
-            root: null,
-            rootMargin: '-130px 0px -70% 0px',
-            threshold: 0
-        };
-
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const id = entry.target.getAttribute('id');
-                    categoryLinks.forEach(link => {
-                        link.classList.remove('active');
-                        if (link.getAttribute('data-rubro') === id) {
-                            link.classList.add('active');
-                            const linkOffset = link.offsetLeft - 20;
-                            nav.scrollTo({ left: linkOffset, behavior: 'smooth' });
-                        }
-                    });
-                }
-            });
-        }, observerOptions);
-
-        sections.forEach(s => observer.observe(s));
-    }
-
-    document.addEventListener('DOMContentLoaded', function() {
-        modalBootstrap = new bootstrap.Modal(document.getElementById('modalPlatoOpciones'));
-        
-        {% if puntos_actual.descuento_pesos %}
-            document.getElementById('puntos-consultar-view').style.display = 'none';
-            document.getElementById('puntos-aplicados-view').style.display = 'block';
-        {% endif %}
+    // 6. INICIALIZACIÓN
+    document.addEventListener('DOMContentLoaded', () => {
+        const offcanvasEl = document.getElementById('offcanvasPlato');
+        if (offcanvasEl) offcanvasBootstrap = new bootstrap.Offcanvas(offcanvasEl);
 
         updateOrderSummary();
         toggleDireccionField();
-        initScrollSpy();
-    });
 
-    // --- PERSISTENCIA ---
-    const camposForm = ['nombre', 'apellido', 'telefono', 'calle', 'altura', 'localidad', 'piso_depto'];
-    document.querySelectorAll('#pedido-form input').forEach(input => {
-        input.addEventListener('input', () => {
-            if (camposForm.includes(input.name)) sessionStorage.setItem('draft_' + input.name, input.value);
+        const inputTel = document.getElementById('telefono');
+        if (inputTel) {
+            inputTel.addEventListener('input', function(e){
+                let v = e.target.value.replace(/\D/g, '');
+                if (v.startsWith('0')) v = v.substring(1);
+                if (v.length > 10) v = v.slice(0, 10);
+                e.target.value = v;
+            });
+        }
+
+        const campos = ['nombre', 'apellido', 'telefono', 'calle', 'altura', 'localidad', 'piso_depto'];
+        campos.forEach(c => {
+            const v = sessionStorage.getItem('draft_' + c);
+            const input = document.querySelector(`[name="${c}"]`);
+            if(v && input) input.value = v;
+            input?.addEventListener('input', e => sessionStorage.setItem('draft_'+c, e.target.value));
         });
     });
 
-    document.addEventListener('DOMContentLoaded', () => {
-        camposForm.forEach(campo => {
-            const guardado = sessionStorage.getItem('draft_' + campo);
-            if (guardado) {
-                const input = document.querySelector(`input[name="${campo}"]`);
-                if(input) input.value = guardado;
-            }
-        });
-        document.getElementById('pedido-form').addEventListener('submit', () => {
-            camposForm.forEach(campo => sessionStorage.removeItem('draft_' + campo));
-        });
-    });
+    function filtrarRubro(rubro, elemento) {
+        // 1. Cambiamos el color del botón apretado
+        document.querySelectorAll('.category-pill').forEach(btn => btn.classList.remove('active'));
+        elemento.classList.add('active');
 
+        // 2. Buscamos todos los platos y títulos
+        const items = document.querySelectorAll('.item-carta');
+        const headers = document.querySelectorAll('.header-rubro');
+        const headerPromos = document.getElementById('sec-promos');
 
-    
-    const inputTelefono = document.getElementById('telefono');
+        if (rubro === 'todos') {
+            // Mostramos TODO
+            items.forEach(i => i.style.display = 'block');
+            headers.forEach(h => h.style.display = 'block');
+            if(headerPromos) headerPromos.style.display = 'block';
+        } else {
+            // Ocultamos todo primero
+            items.forEach(i => i.style.display = 'none');
+            headers.forEach(h => h.style.display = 'none');
+            if(headerPromos) headerPromos.style.display = 'none';
 
-    inputTelefono.addEventListener('input', function (e) {
-        // 1. Elimina cualquier caracter que no sea un número
-        let valor = e.target.value.replace(/\D/g, '');
-        
-        // 2. Si el usuario intenta poner el 0 al principio, se lo quitamos
-        if (valor.startsWith('0')) {
-            valor = valor.substring(1);
+            // Mostramos solo la categoría elegida
+            document.querySelectorAll('.cat-' + rubro).forEach(i => i.style.display = 'block');
+            
+            // Mostramos su título
+            const miHeader = document.getElementById('head-' + rubro);
+            if (miHeader) miHeader.style.display = 'block';
+            
+            // Si eligió promos, mostramos el título de promos
+            if (rubro === 'promos' && headerPromos) headerPromos.style.display = 'block';
         }
-        
-        // 3. Si el usuario intenta poner el 15, lo ayudamos (opcional, pero recomendado)
-        // Nota: Esta lógica es compleja porque el 15 puede ser parte de un número real.
-        // Por ahora, solo limitaremos a 10 dígitos.
-        
-        // 4. Limitamos a máximo 10 dígitos
-        if (valor.length > 10) {
-            valor = valor.slice(0, 10);
-        }
-        
-        e.target.value = valor;
-    });
-
-    // Validación extra antes de enviar el formulario
-    inputTelefono.addEventListener('blur', function (e) {
-        if (e.target.value.length > 0 && e.target.value.length < 10) {
-            alert("El teléfono debe tener exactamente 10 dígitos (Ej: 11 2233 4455).");
-            e.target.focus();
-        }
-    });
+    }
 
 </script>
 {% endblock %}

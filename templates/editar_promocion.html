@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Editar Promo | Tasty Food{% endblock %}
+
+{% block content %}
+<style>
+    /* Estilos de diseño Tasty Food para máxima legibilidad */
+    .main-container { background: transparent !important; border: none !important; box-shadow: none !important; }
+    
+    .form-label, .fw-800, .fw-900, h2, h5 { 
+        color: #ffffff !important; 
+        text-shadow: 2px 2px 5px rgba(0,0,0,1) !important;
+    }
+
+    .tasty-input { 
+        background: rgba(0, 0, 0, 0.6) !important; 
+        border: 1px solid rgba(255, 255, 255, 0.3) !important; 
+        color: white !important; 
+        font-weight: 600;
+        padding: 12px;
+    }
+    
+    .tasty-input:focus {
+        background: rgba(0, 0, 0, 0.8) !important;
+        border-color: var(--primary-color) !important;
+        box-shadow: 0 0 15px rgba(255, 71, 87, 0.4) !important;
+    }
+
+    /* Selector de platos con efecto de resaltado */
+    .plato-item-selector {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 15px;
+        margin-bottom: 10px;
+        transition: 0.3s;
+        display: flex;
+        align-items: center;
+        cursor: pointer;
+    }
+    .plato-item-selector:hover {
+        background: rgba(255, 71, 87, 0.2);
+        border-color: var(--primary-color);
+    }
+    .form-check-input {
+        width: 25px;
+        height: 25px;
+        margin-right: 15px;
+        cursor: pointer;
+        border: 2px solid var(--primary-color) !important;
+    }
+    .form-check-input:checked { background-color: var(--primary-color) !important; }
+    
+    .plato-label { flex-grow: 1; cursor: pointer; margin-bottom: 0; font-weight: 700; color: white !important; }
+    
+    /* Imagen actual previa */
+    .img-preview {
+        width: 100%;
+        height: 150px;
+        object-fit: cover;
+        border-radius: 15px;
+        border: 2px solid var(--primary-color);
+        margin-bottom: 15px;
+    }
+</style>
+
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-11">
+            <div class="card tasty-glass-card shadow-lg p-4" style="background: rgba(0,0,0,0.7) !important; backdrop-filter: blur(15px);">
+                
+                <h2 class="fw-900 text-uppercase text-danger mb-4 border-bottom border-danger pb-3">
+                    <i class="fas fa-edit me-2"></i>Modificar Promoción
+                </h2>
+
+                <form action="{{ url_for('editar_promocion', id_promo=promo.id_promocion) }}" method="POST" enctype="multipart/form-data">
+                    <div class="row">
+                        <!-- COLUMNA IZQUIERDA: DATOS BÁSICOS -->
+                        <div class="col-md-6 border-end border-secondary">
+                            
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Nombre de la Promo</label>
+                                <input type="text" name="nombre" class="form-control tasty-input" value="{{ promo.nombre }}" required>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Descripción / Contenido</label>
+                                <textarea name="descripcion" class="form-control tasty-input" rows="3" required>{{ promo.descripcion }}</textarea>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-6 mb-3">
+                                    <label class="form-label fw-bold">Precio Promo ($)</label>
+                                    <input type="number" step="0.01" name="precio" class="form-control tasty-input" value="{{ promo.precio_total }}" required>
+                                </div>
+
+                                <!-- SECCIÓN MODO COMBO (BLOQUE REFORZADO) -->
+                                <div class="mb-4 p-3 rounded-4 border border-info" style="background: rgba(0, 123, 255, 0.15); position: relative; z-index: 10;">
+                                    <div class="form-check form-switch mb-3">
+                                        <!-- El name debe ser exacto para que Python lo reciba -->
+                                        <input class="form-check-input" type="checkbox" name="es_combo_fijo" id="es_combo_fijo_edit" 
+                                            style="width: 45px; height: 22px; cursor: pointer;"
+                                            {% if promo.es_combo_fijo == 1 %}checked{% endif %} 
+                                            onchange="actualizarVistaCombo(this.checked)">
+                                        <label class="form-check-label fw-bold text-info ms-2" for="es_combo_fijo_edit" style="cursor: pointer;">
+                                            ACTIVAR MODO COMBO (Precio fijo total)
+                                        </label>
+                                    </div>
+
+                                    <!-- Contenedor de cantidades -->
+                                    <div id="config-cantidades-edit" style="display: {% if promo.es_combo_fijo == 1 %}block{% else %}none{% endif %};">
+                                        <div class="row g-3">
+                                            <div class="col-6">
+                                                <label class="form-label small fw-bold text-white text-uppercase">Mínimo platos</label>
+                                                <input type="number" name="min_items" class="form-control tasty-input" 
+                                                    value="{{ promo.min_items if promo.min_items else 1 }}" 
+                                                    min="1" required style="background: rgba(0,0,0,0.5) !important; color: white !important;">
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label small fw-bold text-white text-uppercase">Máximo platos</label>
+                                                <input type="number" name="max_items" class="form-control tasty-input" 
+                                                    value="{{ promo.max_items if promo.max_items else 1 }}" 
+                                                    min="1" required style="background: rgba(0,0,0,0.5) !important; color: white !important;">
+                                            </div>
+                                        </div>
+                                        <div class="form-text text-white-50 mt-2 x-small italic">
+                                            <i class="fas fa-info-circle me-1"></i> El cliente podrá elegir entre estas cantidades por el mismo precio.
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="col-6 mb-3">
+                                    <label class="form-label fw-bold d-block">Estado</label>
+                                    <div class="form-check form-switch mt-2">
+                                        <input class="form-check-input" type="checkbox" name="activo" id="switchActivo" {% if promo.activo %}checked{% endif %}>
+                                        <label class="form-check-label text-white fw-bold" for="switchActivo">Promo Activa</label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Imagen Publicitaria</label>
+                                {% if promo.imagen %}
+                                    <img src="{{ url_for('static', filename='uploads/platos/' + promo.imagen) }}" class="img-preview shadow">
+                                {% endif %}
+                                <input type="file" name="imagen" class="form-control tasty-input">
+                                <small class="text-white-50">Sube una nueva foto solo si deseas cambiar la actual.</small>
+                            </div>
+                        </div>
+
+                        <!-- COLUMNA DERECHA: SELECCIÓN DE PLATOS -->
+                        <div class="col-md-6 ps-md-4">
+                            <h5 class="fw-800 text-warning mb-3 text-uppercase">Platos incluidos en este combo:</h5>
+                            <div class="p-3 rounded-4" style="max-height: 480px; overflow-y: auto; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1);">
+                                {% if platos %}
+                                    {% for p in platos %}
+                                        <div class="plato-item-selector">
+                                            <!-- LÓGICA CLAVE: Si el ID del plato está en la lista de platos_actuales, lo marca como checked -->
+                                            <input class="form-check-input" type="checkbox" name="platos_seleccionados" 
+                                                   value="{{ p.id_plato }}" id="p{{ p.id_plato }}"
+                                                   {% if p.id_plato in platos_actuales %}checked{% endif %}>
+                                            
+                                            <label class="plato-label" for="p{{ p.id_plato }}">
+                                                {{ p.nombre }}
+                                                <span class="d-block text-warning small fw-normal">Precio Unitario: ${{ p.precio }}</span>
+                                            </label>
+                                        </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <div class="text-center py-5 text-white-50">
+                                        No hay platos disponibles para asignar.
+                                    </div>
+                                {% endif %}
+                            </div>
+                            <div class="mt-3 p-2 bg-dark bg-opacity-50 rounded-3 border border-info">
+                                <small class="text-info">
+                                    <i class="fas fa-info-circle me-1"></i> Puedes agregar o quitar platos. El stock se descontará de todos los platos tildados al venderse la promo.
+                                </small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-5 pt-3 border-top border-secondary d-flex gap-3">
+                        <button type="submit" class="btn btn-danger btn-lg rounded-pill fw-900 px-5 shadow-lg">
+                            <i class="fas fa-save me-2"></i>GUARDAR CAMBIOS
+                        </button>
+                        <a href="{{ url_for('gestion_promociones') }}" class="btn btn-outline-light btn-lg rounded-pill px-4">
+                            CANCELAR
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Función de control de visibilidad
+    function actualizarVistaCombo(activado) {
+        const div = document.getElementById('config-cantidades-edit');
+        if (activado) {
+            div.style.display = 'block';
+            // Opcional: enfocar el primer campo
+            div.querySelector('input[name="min_items"]').focus();
+        } else {
+            div.style.display = 'none';
+        }
+    }
+</script>
+
+{% endblock %}
+

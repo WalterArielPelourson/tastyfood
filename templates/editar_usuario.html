@@ -18,36 +18,60 @@
                     {% endif %}
                 {% endwith %}
                 <form action="{{ url_for('editar_usuario', id_usuario=usuario.id_usuario) }}" method="POST">
+                    
+                    <div class="row g-3">
+                        <div class="col-md-6 mb-3">
+                            <label for="nombre" class="form-label">Nombre</label>
+                            <input type="text" class="form-control" id="nombre" name="nombre" required value="{{ usuario.nombre }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="apellido" class="form-label">Apellido</label>
+                            <input type="text" class="form-control" id="apellido" name="apellido" required value="{{ usuario.apellido }}">
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label for="email" class="form-label">Email</label>
                         <input type="email" class="form-control" id="email" name="email" required value="{{ usuario.email }}">
                     </div>
-                    <div class="mb-3">
-                        <label for="nombre" class="form-label">Nombre</label>
-                        <input type="text" class="form-control" id="nombre" name="nombre" required value="{{ usuario.nombre }}">
-                    </div>
-                    <div class="mb-3">
-                        <label for="apellido" class="form-label">Apellido</label>
-                        <input type="text" class="form-control" id="apellido" name="apellido" required value="{{ usuario.apellido }}">
-                    </div>
+
                     <div class="mb-3">
                         <label for="telefono" class="form-label fw-bold">Teléfono / Celular</label>
                         <div class="input-group">
                             <span class="input-group-text"><i class="bi bi-phone"></i></span>
                             <input type="text" class="form-control" id="telefono" name="telefono" 
                                 placeholder="Ej: 5491122334455" 
-                                value="{{ usuario.telefono if usuario else request_form.telefono }}">
+                                value="{{ usuario.telefono if usuario.telefono else '' }}">
                         </div>
                         <div class="form-text">Usar formato internacional (ej: 549 para Argentina).</div>
                     </div>
-                    <div class="mb-3">
-                        <label for="id_rol" class="form-label">Rol</label>
-                        <select class="form-select" id="id_rol" name="id_rol" required>
-                            <option value="">Seleccione un Rol</option>
-                            {% for rol in roles %}
-                                <option value="{{ rol.id_rol }}" {% if usuario.id_rol == rol.id_rol %}selected{% endif %}>{{ rol.nombre_rol|capitalize }}</option>
-                            {% endfor %}
-                        </select>
+
+                    <div class="row g-3">
+                        <div class="col-md-6 mb-3">
+                            <label for="id_rol" class="form-label">Rol</label>
+                            <select class="form-select" id="id_rol" name="id_rol" required>
+                                <option value="">Seleccione un Rol</option>
+                                {% for rol in roles %}
+                                    <option value="{{ rol.id_rol }}" {% if usuario.id_rol == rol.id_rol %}selected{% endif %}>{{ rol.nombre_rol|capitalize|replace('_', ' ') }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <!-- Lógica de Empresa: Selector para Super Admin, Texto fijo para Admin de Sucursal -->
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Empresa Asignada</label>
+                            {% if current_user.has_role('super_admin') %}
+                                <select class="form-select" id="id_empresa" name="id_empresa">
+                                    <option value="">Ninguna (Super Admin)</option>
+                                    {% for empresa in empresas %}
+                                        <option value="{{ empresa.id_empresa }}" {% if usuario.id_empresa == empresa.id_empresa %}selected{% endif %}>{{ empresa.nombre }}</option>
+                                    {% endfor %}
+                                </select>
+                            {% else %}
+                                <input type="text" class="form-control bg-light" value="{{ current_user.empresa_nombre_aux }}" readonly>
+                                <input type="hidden" name="id_empresa" value="{{ usuario.id_empresa }}">
+                            {% endif %}
+                        </div>
                     </div>
 
                     <div class="mb-3">
@@ -66,33 +90,35 @@
                         <div class="form-text">Obligatorio si el usuario va a usar el Panel de Reparto.</div>
                     </div>
 
-                    <div class="mb-3">
-                        <label for="id_empresa" class="form-label">Empresa (Opcional, no para Super Admin)</label>
-                        <select class="form-select" id="id_empresa" name="id_empresa">
-                            <option value="">Ninguna</option>
-                            {% for empresa in empresas %}
-                                <option value="{{ empresa.id_empresa }}" {% if usuario.id_empresa == empresa.id_empresa %}selected{% endif %}>{{ empresa.nombre }}</option>
-                            {% endfor %}
-                        </select>
-                        <small class="form-text text-muted">Deja en "Ninguna" si el usuario es un Super Administrador.</small>
-                    </div>
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" class="form-check-input" id="activo" name="activo" {% if usuario.activo %}checked{% endif %}>
-                        <label class="form-check-label" for="activo">Activo</label>
-                    </div>
-                    <div class="mb-3 form-check">
-                        <input type="checkbox" class="form-check-input" id="primer_login_requerido" name="primer_login_requerido" {% if usuario.primer_login_requerido %}checked{% endif %}>
-                        <label class="form-check-label" for="primer_login_requerido">Requerir cambio de contraseña en el próximo login</label>
-                    </div>
-                    <div class="mb-3">
-                        <label for="nueva_password" class="form-label">Nueva Contraseña (Dejar en blanco para no cambiar)</label>
-                        <input type="password" class="form-control" id="nueva_password" name="nueva_password" minlength="6">
-                        <small class="form-text text-muted">Ingrese una nueva contraseña solo si desea cambiarla.</small>
+                    <div class="row bg-light p-3 rounded mb-3">
+                        <div class="col-md-6">
+                            <div class="form-check form-switch">
+                                <input type="checkbox" class="form-check-input" id="activo" name="activo" {% if usuario.activo %}checked{% endif %}>
+                                <label class="form-check-label fw-bold" for="activo">Usuario Activo</label>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check form-switch">
+                                <input type="checkbox" class="form-check-input" id="primer_login_requerido" name="primer_login_requerido" {% if usuario.primer_login_requerido %}checked{% endif %}>
+                                <label class="form-check-label fw-bold" for="primer_login_requerido">Forzar cambio de clave</label>
+                            </div>
+                        </div>
                     </div>
 
-                    <div class="d-flex justify-content-between">
-                        <a href="{{ url_for('gestion_usuarios') }}" class="btn btn-secondary">Cancelar</a>
-                        <button type="submit" class="btn btn-success">
+                    <div class="mb-3">
+                        <label for="password" class="form-label fw-bold text-danger">Cambiar Contraseña</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-key"></i></span>
+                            <input type="password" class="form-control" id="password" name="password" minlength="6" placeholder="Dejar en blanco para no cambiar">
+                        </div>
+                        <small class="form-text text-muted">Mínimo 6 caracteres. Solo complete este campo si desea establecer una nueva contraseña.</small>
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-4 border-top pt-3">
+                        <a href="{{ url_for('gestion_usuarios') }}" class="btn btn-secondary">
+                            <i class="bi bi-arrow-left"></i> Volver
+                        </a>
+                        <button type="submit" class="btn btn-success px-4">
                             <i class="bi bi-save"></i> Guardar Cambios
                         </button>
                     </div>

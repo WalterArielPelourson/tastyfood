@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block title %}Gestión de Promociones | Tasty Food{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <!-- Encabezado con Estilo Tasty -->
+    <div class="d-flex justify-content-between align-items-center mb-4 animate__animated animate__fadeIn">
+        <h2 class="fw-900 text-white text-uppercase m-0">
+            <i class="fas fa-tags me-2 text-danger"></i>Gestión de Promos
+        </h2>
+        <a href="{{ url_for('agregar_promocion') }}" class="btn btn-danger rounded-pill fw-900 px-4 shadow-lg">
+            <i class="fas fa-plus-circle me-2"></i>NUEVA PROMO
+        </a>
+    </div>
+
+    <!-- Tabla de Promociones con Efecto Glassmorphism -->
+    <div class="card tasty-glass-card shadow-lg overflow-hidden border-0">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 text-white">
+                <thead class="bg-dark text-white">
+                    <tr class="text-uppercase small" style="border-bottom: 2px solid var(--primary-color);">
+                        <th class="ps-4">Imagen</th>
+                        <th>Nombre del Combo</th>
+                        <th>Precio Total</th>
+                        <th>Estado</th>
+                        <th class="text-center pe-4">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody style="background: rgba(0,0,0,0.4);">
+                    {% for p in promociones %}
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.1);">
+                        <!-- IMAGEN -->
+                        <td class="ps-4">
+                            {% if p.imagen %}
+                                <img src="{{ url_for('static', filename='uploads/platos/' + p.imagen) }}" 
+                                     class="rounded-3 shadow-sm border border-secondary" 
+                                     style="width: 60px; height: 60px; object-fit: cover;">
+                            {% else %}
+                                <div class="bg-secondary bg-opacity-25 rounded-3 text-center d-flex align-items-center justify-content-center" 
+                                     style="width: 60px; height: 60px; border: 1px dashed rgba(255,255,255,0.3);">
+                                    <i class="fas fa-fire text-warning"></i>
+                                </div>
+                            {% endif %}
+                        </td>
+
+                        <!-- NOMBRE -->
+                        <td>
+                            <div class="fw-bold fs-5">{{ p.nombre }}</div>
+                            <div class="small text-white-50">{{ p.descripcion | truncate(50) }}</div>
+                        </td>
+
+                        <!-- PRECIO -->
+                        <td>
+                            <div class="fw-900 text-warning fs-5">
+                                ${{ "{:,.2f}".format(p.precio_total) }}
+                            </div>
+                        </td>
+
+                        <!-- ESTADO -->
+                        <td>
+                            {% if p.activo %}
+                                <span class="badge bg-success rounded-pill px-3 py-2 shadow-sm">ACTIVA</span>
+                            {% else %}
+                                <span class="badge bg-secondary rounded-pill px-3 py-2">PAUSADA</span>
+                            {% endif %}
+                        </td>
+
+                        <!-- ACCIONES CORREGIDAS -->
+                        <td class="text-center pe-4">
+                            <div class="d-flex justify-content-center gap-2">
+                                <!-- Botón Editar -->
+                                <a href="{{ url_for('editar_promocion', id_promo=p.id_promocion) }}" 
+                                   class="btn btn-sm btn-info text-white rounded-pill px-3 fw-bold shadow-sm" 
+                                   title="Editar Promo">
+                                    <i class="fas fa-edit me-1"></i> EDITAR
+                                </a>
+
+                                <!-- Formulario Eliminar (Corregido p.id_promocion) -->
+                                <form action="{{ url_for('eliminar_promocion', id_promo=p.id_promocion) }}" 
+                                      method="POST" 
+                                      onsubmit="return confirm('¿Estás seguro de eliminar esta promoción? Esta acción no se puede deshacer.')">
+                                    <button type="submit" class="btn btn-sm btn-danger rounded-pill px-3 fw-bold shadow-sm" title="Eliminar">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center py-5">
+                            <div class="text-white-50">
+                                <i class="fas fa-tags fa-3x mb-3 opacity-20"></i>
+                                <p>No hay promociones creadas aún para esta sucursal.</p>
+                                <a href="{{ url_for('agregar_promocion') }}" class="btn btn-outline-danger btn-sm rounded-pill">Crear mi primera promo</a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Efecto hover sobre las filas de la tabla cristal */
+    .table-hover tbody tr:hover {
+        background: rgba(255, 255, 255, 0.05) !important;
+        transition: 0.3s ease;
+    }
+    
+    .fw-900 { font-weight: 900; }
+    .tasty-glass-card {
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        backdrop-filter: blur(15px);
+    }
+</style>
+{% endblock %}

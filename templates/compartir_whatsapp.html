@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Tasty Food | WhatsApp</title>
+    <style>
+        body { background: #000; color: white; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: #111; padding: 40px; border-radius: 25px; border: 2px solid #ff4757; text-align: center; box-shadow: 0 0 50px rgba(255, 0, 0, 0.2); }
+        .spinner { border: 4px solid #222; border-top: 4px solid #ff4757; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="spinner"></div>
+        <h2 style="letter-spacing: 1px;">TASTY FOOD</h2>
+        <p style="color: #888;">Abriendo WhatsApp...</p>
+    </div>
+
+    <script>
+        // DATOS DESDE PYTHON
+        const nombreCliente = {{ pedido.cliente_nombre | tojson }};
+        const idPedido = "{{ pedido.id_pedido }}";
+        const empresa = {{ nombre_e | tojson }};
+        const alias = {{ alias | tojson }};
+        const total = "{{ pedido.costo_total }}";
+        const envio = "{{ pedido.costo_envio }}";
+        const formaPago = {{ pedido.forma_pago | tojson }};
+        const tipoMsg = "{{ tipo }}";
+        
+        // CONSTRUCCIÓN DE LÍNEAS (Unicode para evitar rombos )
+        let lineas = [];
+        
+        if (tipoMsg === 'reenvio') {
+            lineas.push("\u00A1Hola *" + nombreCliente + "*! \uD83C\uDF1F");
+            lineas.push("Te enviamos el recordatorio de tu pedido *#" + idPedido + "* en *" + empresa + "*.\n");
+        } else {
+            lineas.push("\u00A1Hola *" + nombreCliente + "*! \uD83C\uDF1F");
+            lineas.push("Confirmamos tu pedido *#" + idPedido + "* en *" + empresa + "*.\n");
+        }
+
+        lineas.push("\uD83D\uDCDD *Detalle de tu pedido:*");
+        
+        {% for item in pedido.items %}
+        lineas.push("- {{ item.cantidad }}x {{ item.plato_nombre }} {% if item.detalles %}({{ item.detalles }}){% endif %}: ${{ item.precio_unitario * item.cantidad }}");
+        {% endfor %}
+
+        if (parseFloat(envio) > 0) {
+            lineas.push("\uD83D\uDE9A Env\u00EDo: $" + envio);
+        }
+
+        lineas.push("\n\uD83D\uDCB0 *TOTAL A PAGAR: $" + total + "*");
+        
+        // Formato de hora seguro
+        let hora = "{{ pedido.horario_entrega.strftime('%H:%M') if pedido.horario_entrega.strftime else pedido.horario_entrega }}";
+        lineas.push("\uD83D\uDD52 *Entrega estimada:* " + hora + " hs\n");
+
+        let pagoLower = formaPago.toLowerCase();
+        if (pagoLower.includes("transferencia") || pagoLower.includes("mercado") || pagoLower.includes("mp")) {
+            lineas.push("\uD83D\uDCB3 *Pago:* Realiz\u00E1 el env\u00EDo al ALIAS: *" + alias + "*");
+            lineas.push("\u23F3 Por favor, envianos el comprobante por ac\u00E1.\n");
+        } else {
+            lineas.push("\uD83D\uDCB3 *Forma de pago:* " + formaPago);
+            lineas.push("\u00A1Ya estamos preparando tu pedido! \uD83D\uDC68\u200D\u200D\uD83C\uDF73\n");
+        }
+
+        lineas.push("\u00A1Muchas gracias por elegirnos! \uD83D\uDE0A");
+
+        // UNIR Y ENVIAR
+        const mensajeFinal = lineas.join("\n");
+        const urlWa = "https://wa.me/{{ tel }}?text=" + encodeURIComponent(mensajeFinal);
+
+        // Abrir WhatsApp en solapa nueva
+        window.open(urlWa, "_blank");
+
+        // Volver al panel automáticamente
+        setTimeout(function(){
+            window.location.href = "{{ url_for('gestion_pedidos') }}";
+        }, 500);
+    </script>
+</body>
+</html>

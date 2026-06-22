@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Imprimir Comanda y Recibo #{{ id_pedido }}</title>
+    <style>
+        /* Ajuste para ancho de papel térmico común (80mm) */
+        @page { size: 80mm auto; margin: 0; }
+        body { width: 80mm; margin: 0; padding: 0; }
+        
+        /* SALTO DE PÁGINA: Crucial para impresoras con corte automático */
+        .page-break { 
+            page-break-after: always; 
+            border-bottom: 2px dashed #000;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+        }
+
+        @media print {
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- El contenido de estos DIVs viene renderizado desde Python -->
+    <div id="comanda-cocina" class="page-break">
+        {{ ticket_cocina | safe }}
+    </div>
+
+    <div id="recibo-cliente">
+        {{ ticket_cliente | safe }}
+    </div>
+
+    <script>
+        // Disparamos la impresión automáticamente al cargar
+        window.onload = function() {
+            window.print();
+            // Opcional: Cerrar la pestaña después de imprimir
+            // setTimeout(function() { window.close(); }, 500);
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Imprimir Pedido #{{ pedido.id_pedido }}</title>
+    <style>
+        body { font-family: 'Courier New', Courier, monospace; color: #000; margin: 0; padding: 0; background: #fff; }
+        .ticket { width: 80mm; padding: 5px; margin: 0 auto; border: 1px solid #eee; }
+        .center { text-align: center; }
+        .bold { font-weight: bold; }
+        .fs-lg { font-size: 1.2rem; }
+        .border-top { border-top: 1px dashed #000; margin-top: 5px; padding-top: 5px; }
+        table { width: 100%; border-collapse: collapse; }
+        .text-right { text-align: right; }
+        .sep { margin: 10px 0; border-bottom: 1px solid #000; }
+        
+        /* Salto de página para que salgan dos tickets distintos */
+        .page-break { page-break-after: always; }
+
+        @media print {
+            .no-print { display: none; }
+            .ticket { border: none; width: 100%; }
+        }
+    </style>
+</head>
+<body onload="window.print();">
+
+    <!-- TICKET 1: COMANDA (PARA COCINA) -->
+    <div class="ticket page-break">
+        <div class="center">
+            <span class="bold fs-lg">COMANDA DE COCINA</span><br>
+            <span class="bold fs-lg">PEDIDO #{{ pedido.id_pedido }}</span><br>
+            <span>{{ pedido.horario_entrega.strftime('%d/%m/%Y %H:%M') }} hs</span>
+        </div>
+        
+        <div class="border-top">
+            <span class="bold">CLIENTE:</span> {{ pedido.cliente_nombre }} {{ pedido.cliente_apellido }}<br>
+            <span class="bold">ENTREGA:</span> {{ 'ENVÍO' if pedido.es_envio else 'RETIRA' }}
+        </div>
+
+        <div class="border-top">
+            <span class="bold">PRODUCTOS:</span>
+            <table>
+                {% for item in pedido.items %}
+                <tr>
+                    <td style="vertical-align: top; width: 10%;">{{ item.cantidad }}x</td>
+                    <td>
+                        <span class="bold">{{ item.plato_nombre }}</span>
+                        {% if item.detalles %}
+                            <br><small>↳ {{ item.detalles }}</small>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+        
+        {% if pedido.notas %}
+        <div class="border-top">
+            <span class="bold">NOTAS:</span><br>
+            {{ pedido.notas }}
+        </div>
+        {% endif %}
+        <div class="center border-top">*** FIN COMANDA ***</div>
+    </div>
+
+
+    <!-- TICKET 2: RECIBO (PARA EL CLIENTE) -->
+    <div class="ticket">
+        <div class="center">
+            <span class="bold fs-lg">{{ empresa_nombre }}</span><br>
+            <span>{{ empresa_dir }}</span><br>
+            <span>Tel: {{ empresa_tel }}</span>
+        </div>
+        
+        <div class="sep"></div>
+        
+        <div class="center">
+            <span class="bold">PEDIDO #{{ pedido.id_pedido }}</span><br>
+            <span>{{ pedido.fecha_creacion.strftime('%d/%m/%Y %H:%M') }}</span>
+        </div>
+
+        <div class="border-top">
+            <span class="bold">Cliente:</span> {{ pedido.cliente_nombre }}<br>
+            {% if pedido.es_envio %}
+            <span class="bold">Dirección:</span> {{ pedido.direccion_entrega }}
+            {% endif %}
+        </div>
+
+        <div class="border-top">
+            <table>
+                <thead>
+                    <tr>
+                        <th align="left">Item</th>
+                        <th align="right">Total</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in pedido.items %}
+                    <tr>
+                        <td>{{ item.cantidad }}x {{ item.plato_nombre }}</td>
+                        <td align="right">${{ "{:,.2f}".format(item.precio_unitario * item.cantidad) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="border-top">
+            <table class="bold">
+                <tr>
+                    <td>SUBTOTAL:</td>
+                    <td align="right">${{ "{:,.2f}".format(pedido.costo_total - pedido.costo_envio) }}</td>
+                </tr>
+                {% if pedido.costo_envio > 0 %}
+                <tr>
+                    <td>ENVÍO:</td>
+                    <td align="right">${{ "{:,.2f}".format(pedido.costo_envio) }}</td>
+                </tr>
+                {% endif %}
+                <tr class="fs-lg">
+                    <td>TOTAL:</td>
+                    <td align="right">${{ "{:,.2f}".format(pedido.costo_total) }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="border-top center">
+            <span class="bold">PAGO: {{ pedido.forma_pago | upper }}</span><br>
+            ¡Gracias por tu compra!
+        </div>
+    </div>
+
+    <div class="center no-print" style="margin-top: 20px;">
+        <button onclick="window.print()" class="btn">Volver a Imprimir</button>
+        <button onclick="window.close()" class="btn">Cerrar</button>
+    </div>
+
+</body>
+</html>

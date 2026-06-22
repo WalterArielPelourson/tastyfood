@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+
+{% block title %}Gestor de Precios | Tasty Food{% endblock %}
+
+{% block content %}
+<style>
+    /* 1. Ajuste de transparencia del contenedor principal */
+    .main-container { 
+        background: transparent !important; 
+        border: none !important; 
+        box-shadow: none !important; 
+    }
+    
+    /* 2. Legibilidad extrema: Sombra negra detrás de todo el texto blanco */
+    .h2, h2, .fw-bold, td, th, label { 
+        color: #ffffff !important; 
+        text-shadow: 2px 2px 5px rgba(0,0,0,1), 1px 1px 2px rgba(0,0,0,1) !important;
+    }
+
+    /* 3. Estilo de la Tarjeta y Tabla (Más opaco para que se lea el blanco) */
+    .tasty-glass-card {
+        background: rgba(0, 0, 0, 0.85) !important; /* Aumentado al 85% para legibilidad */
+        backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 20px !important;
+    }
+
+    /* 4. Inputs estlizados */
+    .tasty-input { 
+        background: rgba(255, 255, 255, 0.1) !important; 
+        border: 1px solid rgba(255, 255, 255, 0.3) !important; 
+        color: white !important; 
+        font-weight: 600;
+    }
+    .tasty-input:focus {
+        border-color: var(--primary-color) !important;
+        box-shadow: 0 0 15px rgba(255, 71, 87, 0.4) !important;
+        background: rgba(0, 0, 0, 0.5) !important;
+    }
+
+    /* 5. Filas con oferta: Tinte rojo sutil */
+    .row-oferta { 
+        background: rgba(255, 71, 87, 0.15) !important; 
+    }
+
+    /* 6. Checkboxes Grandes */
+    .plato-check {
+        width: 22px;
+        height: 22px;
+        cursor: pointer;
+        border: 2px solid var(--primary-color) !important;
+        background-color: rgba(255,255,255,0.1);
+    }
+    .plato-check:checked {
+        background-color: var(--primary-color) !important;
+    }
+
+    .fw-900 { font-weight: 900; }
+</style>
+
+<div class="container py-4">
+    <h2 class="fw-900 text-white text-uppercase mb-4">
+        <i class="fas fa-percentage me-2 text-danger"></i>Gestor de Ofertas y Precios
+    </h2>
+
+    <form method="POST">
+        <!-- BARRA DE ACCIONES MASIVAS -->
+        <div class="card tasty-glass-card mb-4 border-danger shadow-lg">
+            <div class="card-body d-flex align-items-center flex-wrap gap-3">
+                <div class="fw-bold text-white text-uppercase small" style="letter-spacing: 1px;">Acciones Masivas:</div>
+                
+                <div class="input-group shadow-sm" style="width: 250px;">
+                    <span class="input-group-text bg-dark text-white border-secondary small fw-bold">DESCONTAR %</span>
+                    <input type="number" name="porcentaje_masivo" class="form-control tasty-input" placeholder="Ej: 10" min="1" max="99">
+                </div>
+
+                <button type="submit" name="accion" value="masivo" class="btn btn-danger rounded-pill fw-900 px-4 shadow">
+                    APLICAR DESCUENTO
+                </button>
+
+                <button type="submit" name="accion" value="limpiar" class="btn btn-outline-light rounded-pill fw-bold px-4" 
+                        onclick="return confirm('¿Quitar las ofertas de los platos seleccionados?')">
+                    QUITAR OFERTAS
+                </button>
+            </div>
+        </div>
+
+        <!-- TABLA DE PLATOS -->
+        <div class="card tasty-glass-card shadow-lg overflow-hidden border-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0 text-white">
+                    <thead class="bg-dark">
+                        <tr class="text-uppercase small" style="border-bottom: 2px solid var(--primary-color);">
+                            <th class="ps-4 py-3">
+                                <input type="checkbox" id="selectAll" class="form-check-input plato-check">
+                            </th>
+                            <th>Nombre del Plato</th>
+                            <th>Rubro</th>
+                            <th>Precio Base</th>
+                            <th>Precio Oferta</th>
+                            <th class="text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody style="background: rgba(0,0,0,0.3);">
+                        {% for p in platos %}
+                        <tr class="{% if p.precio_oferta %}row-oferta{% endif %}" style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td class="ps-4">
+                                <input type="checkbox" name="platos_seleccionados" value="{{ p.id_plato }}" class="form-check-input plato-check item-checkbox">
+                            </td>
+                            <td>
+                                <!-- Aquí el nombre tendrá sombra negra para verse sobre el fondo -->
+                                <div class="fw-bold fs-6 text-white">{{ p.nombre }}</div>
+                            </td>
+                            <td>
+                                <span class="badge bg-secondary bg-opacity-50 border border-secondary rounded-pill px-3">{{ p.rubro }}</span>
+                            </td>
+                            <td class="text-white-50 fw-bold">
+                                ${{ "{:,.2f}".format(p.precio) }}
+                            </td>
+                            <td>
+                                {% if p.precio_oferta %}
+                                    <span class="text-danger fw-900 fs-5">
+                                        ${{ "{:,.2f}".format(p.precio_oferta) }}
+                                    </span>
+                                {% else %}
+                                    <span class="text-white-50 x-small italic opacity-40">Precio Normal</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if p.precio_oferta %}
+                                    <span class="badge bg-danger rounded-pill px-3 py-2 fw-900 shadow">
+                                        <i class="fas fa-fire me-1"></i>OFERTA
+                                    </span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </form>
+</div>
+
+<script>
+    // Lógica para seleccionar/deseleccionar todos los checkboxes
+    document.getElementById('selectAll').onclick = function() {
+        var checkboxes = document.querySelectorAll('.item-checkbox');
+        for (var checkbox of checkboxes) {
+            checkbox.checked = this.checked;
+        }
+    }
+</script>
+{% endblock %}

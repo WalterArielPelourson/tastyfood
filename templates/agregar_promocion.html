@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% block title %}Nueva Promo | Tasty Food{% endblock %}
+
+{% block content %}
+<style>
+    /* Estilos para legibilidad y diseño Tasty */
+    .main-container { background: transparent !important; border: none !important; box-shadow: none !important; }
+    
+    /* Legibilidad Máxima: Forzamos textos blancos con sombra negra intensa */
+    .form-label, .fw-800, .fw-900, h2, h5 { 
+        color: #ffffff !important; 
+        text-shadow: 2px 2px 5px rgba(0,0,0,1), 0px 0px 10px rgba(0,0,0,0.5) !important;
+    }
+
+    /* Estilo de los inputs para que se vea bien lo que se escribe */
+    .tasty-input { 
+        background: rgba(0, 0, 0, 0.6) !important; 
+        border: 1px solid rgba(255, 255, 255, 0.3) !important; 
+        color: white !important; 
+        font-weight: 600;
+        padding: 12px;
+    }
+    
+    .tasty-input:focus {
+        background: rgba(0, 0, 0, 0.8) !important;
+        border-color: var(--primary-color) !important;
+        color: white !important;
+        box-shadow: 0 0 15px rgba(255, 71, 87, 0.4) !important;
+    }
+
+    .tasty-input::placeholder {
+        color: rgba(255,255,255,0.5) !important;
+    }
+
+    /* Caja de selección de platos */
+    .plato-item-selector {
+        background: rgba(0, 0, 0, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 15px;
+        padding: 15px;
+        margin-bottom: 10px;
+        transition: 0.3s;
+        display: flex;
+        align-items: center;
+    }
+    .plato-item-selector:hover {
+        background: rgba(255, 71, 87, 0.2);
+        border-color: var(--primary-color);
+        transform: scale(1.02);
+    }
+    .form-check-input {
+        width: 25px;
+        height: 25px;
+        margin-right: 15px;
+        cursor: pointer;
+        background-color: rgba(255,255,255,0.1);
+        border: 2px solid var(--primary-color) !important;
+    }
+    .form-check-input:checked {
+        background-color: var(--primary-color) !important;
+    }
+    .plato-label {
+        cursor: pointer;
+        flex-grow: 1;
+        margin-bottom: 0;
+        font-weight: 800; /* Letra más gruesa */
+        color: white !important;
+        font-size: 1rem;
+    }
+    .text-white-50 { color: rgba(255,255,255,0.8) !important; }
+    
+    /* Scrollbar estilizada */
+    .custom-scroll::-webkit-scrollbar { width: 8px; }
+    .custom-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+    .custom-scroll::-webkit-scrollbar-thumb { background: var(--primary-color); border-radius: 10px; }
+</style>
+
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-lg-11">
+            <div class="card tasty-glass-card shadow-lg p-4" style="background: rgba(0,0,0,0.7) !important; backdrop-filter: blur(15px);">
+                
+                <!-- SECCIÓN PARA SUPER ADMIN: Selector de Sucursal -->
+                {% if current_user.has_role('super_admin') %}
+                <div class="mb-4 p-4 bg-dark bg-opacity-75 rounded-4 border border-warning animate__animated animate__fadeIn">
+                    <label class="form-label text-warning small fw-bold text-uppercase" style="letter-spacing: 1px;">Sucursal a Gestionar:</label>
+                    <select class="form-select tasty-input border-warning" onchange="location.href='?id_empresa=' + this.value">
+                        {% for e in empresas_admin %}
+                            <option value="{{ e.id_empresa }}" {% if e.id_empresa == id_empresa_actual %}selected{% endif %}>
+                                {{ e.nombre }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                    <div class="form-text text-white-50 mt-2 fw-bold">Debes seleccionar la sucursal para que aparezcan sus platos correspondientes.</div>
+                </div>
+                {% endif %}
+
+                <h2 class="fw-900 text-uppercase text-danger mb-4 border-bottom border-danger pb-3">
+                    <i class="fas fa-fire me-2"></i>Nueva Promoción
+                </h2>
+                
+                <form action="{{ url_for('agregar_promocion') }}" method="POST" enctype="multipart/form-data">
+                    <!-- Campo oculto para asegurar que Python reciba el ID de empresa correcto -->
+                    <input type="hidden" name="id_empresa" value="{{ id_empresa_actual }}">
+
+                    <div class="row">
+                        <!-- Columna de Datos -->
+                        <div class="col-md-6 border-end border-secondary">
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Nombre del Combo / Promo</label>
+                                <input type="text" name="nombre" class="form-control tasty-input" placeholder="Ej: Combo Mega Tasty" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Descripción (Aparece en la carta)</label>
+                                <textarea name="descripcion" class="form-control tasty-input" rows="3" placeholder="Detallá qué incluye el combo... Ej: Hamburguesa + Papas + Bebida" required></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Precio del Combo ($)</label>
+                                <input type="number" step="0.01" name="precio" class="form-control tasty-input" placeholder="0.00" required>
+                            </div>
+
+                            <!-- MODO COMBO SELECTIVO -->
+                            <div class="mb-4 p-3 rounded-4 border border-info" style="background: rgba(0, 123, 255, 0.1);">
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" name="es_combo_fijo" id="es_combo_fijo" 
+                                        {% if promo and promo.es_combo_fijo %}checked{% endif %} onchange="document.getElementById('config-combo').style.display = this.checked ? 'block' : 'none'">
+                                    <label class="form-check-label fw-bold text-info" for="es_combo_fijo">
+                                        MODO COMBO (Precio fijo por el total de productos)
+                                    </label>
+                                </div>
+
+                                <div id="config-combo" style="display: {% if promo and promo.es_combo_fijo %}block{% else %}none{% endif %};">
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-bold">Mínimo de productos</label>
+                                            <input type="number" name="min_items" class="form-control tasty-input" value="{{ promo.min_items if promo else 1 }}">
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-bold">Máximo de productos</label>
+                                            <input type="number" name="max_items" class="form-control tasty-input" value="{{ promo.max_items if promo else 1 }}">
+                                        </div>
+                                    </div>
+                                    <div class="form-text text-white-50 mt-2">
+                                        <i class="fas fa-info-circle me-1"></i> Si está activo, el cliente podrá elegir varios platos hasta el máximo, y el precio será el que definiste arriba.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="mb-4">
+                                <label class="form-label fw-bold">Imagen Publicitaria</label>
+                                <input type="file" name="imagen" class="form-control tasty-input">
+                                <div class="form-text text-white-50 x-small mt-1">Sube una foto atractiva del combo completo.</div>
+                            </div>
+                        </div>
+
+                        <!-- Columna de Selección de Platos -->
+                        <div class="col-md-6 ps-md-4">
+                            <h5 class="fw-800 text-warning mb-3 text-uppercase">Seleccioná los platos incluidos:</h5>
+                            <div class="p-3 rounded-4 custom-scroll" style="max-height: 420px; overflow-y: auto; border: 1px solid rgba(255,255,255,0.1); background: rgba(0,0,0,0.5);">
+                                {% if platos %}
+                                    {% for p in platos %}
+                                        <div class="plato-item-selector">
+                                            <input class="form-check-input" type="checkbox" name="platos_seleccionados" value="{{ p.id_plato }}" id="p{{ p.id_plato }}">
+                                            <label class="plato-label" for="p{{ p.id_plato }}">
+                                                {{ p.nombre }}
+                                                <span class="d-block text-warning small fw-normal">Costo base: ${{ p.precio }}</span>
+                                            </label>
+                                        </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <div class="text-center py-5">
+                                        <i class="fas fa-utensils fa-4x text-secondary mb-3 opacity-50"></i>
+                                        <p class="text-white-50 fw-bold">No hay platos activos encontrados en esta sucursal.</p>
+                                        <small class="text-white-50">Asegúrate de haber cargado platos en el catálogo primero.</small>
+                                    </div>
+                                {% endif %}
+                            </div>
+                            <div class="form-text text-white-50 mt-3 italic small">
+                                <i class="fas fa-info-circle me-1"></i> Estos platos se descontarán del stock automáticamente cuando se venda este combo.
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-5 pt-3 border-top border-secondary d-flex gap-3">
+                        <button type="submit" class="btn btn-danger btn-lg rounded-pill fw-900 px-5 shadow-lg animate__animated animate__pulse animate__infinite">
+                            <i class="fas fa-save me-2"></i>CREAR PROMOCIÓN
+                        </button>
+                        <a href="{{ url_for('gestion_catalogo') }}" class="btn btn-outline-light btn-lg rounded-pill px-4">
+                            CANCELAR
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

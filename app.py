@@ -8,9 +8,11 @@ import secrets  # Necesario para los tokens de seguimiento
 import requests
 import urllib.parse
 import mercadopago
+import base64 # <--- AGREGA ESTA LÍNEA AL PRINCIPIO DEL ARCHIVO
 from datetime import datetime, timedelta, time
 # Hora
 import pytz
+
 from datetime import datetime, timedelta, time
 
 # 2. Importaciones de Flask y extensiones
@@ -96,14 +98,15 @@ VALOR_PESO_POR_PUNTO_CANJE = 1.0
 # Configuración Hora
 ARG_TZ = pytz.timezone('America/Argentina/Buenos_Aires')
 
+# Busca estas funciones y asegúrate de que se vean así:
 def get_now_arg():
     """Retorna el objeto datetime actual con la zona horaria de Argentina."""
     return datetime.now(ARG_TZ)
 
 def get_now_iso():
-    """Retorna la fecha y hora actual en string formato ISO para la DB."""
+    """Retorna la fecha y hora actual en string formato YYYY-MM-DD HH:MM:SS para la DB."""
+    # Usamos el formato estándar de SQLite para que las comparaciones funcionen bien
     return get_now_arg().strftime('%Y-%m-%d %H:%M:%S')
-
 
 
 # --- Funciones de Base de Datos ---
@@ -163,7 +166,41 @@ def crear_tablas():
         )
     """)
     
-    cursor.execute("CREATE TABLE IF NOT EXISTS items_pedido (id INTEGER PRIMARY KEY AUTOINCREMENT, id_pedido INTEGER NOT NULL, id_plato INTEGER NOT NULL, cantidad INTEGER NOT NULL, precio_unitario REAL NOT NULL)")
+    # Dentro de crear_tablas() en app.py
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS promociones (
+            id_promocion INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL,
+            descripcion TEXT,
+            precio_total REAL NOT NULL,
+            activo INTEGER DEFAULT 1,
+            id_empresa INTEGER,
+            imagen TEXT,
+            FOREIGN KEY(id_empresa) REFERENCES empresas(id_empresa)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS promocion_platos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id_promocion INTEGER,
+            id_plato INTEGER,
+            cantidad INTEGER DEFAULT 1,
+            FOREIGN KEY(id_promocion) REFERENCES promociones(id_promocion),
+            FOREIGN KEY(id_plato) REFERENCES platos(id_plato)
+        )
+    """)
+    
+    #cursor.execute("CREATE TABLE IF NOT EXISTS items_pedido (id INTEGER PRIMARY KEY AUTOINCREMENT, id_pedido INTEGER NOT NULL, id_plato INTEGER NOT NULL, cantidad INTEGER NOT NULL, precio_unitario REAL NOT NULL)")
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS items_pedido (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        id_pedido INTEGER NOT NULL, 
+        id_plato INTEGER, -- Quitamos el NOT NULL
+        id_promocion INTEGER, -- Agregamos esta columna
+        cantidad INTEGER NOT NULL, 
+        precio_unitario REAL NOT NULL)""")
+
     cursor.execute("CREATE TABLE IF NOT EXISTS ingresos_egresos (id INTEGER PRIMARY KEY AUTOINCREMENT, tipo TEXT NOT NULL, monto REAL NOT NULL, descripcion TEXT, fecha_hora TEXT NOT NULL, id_pedido_origen INTEGER, id_repartidor_origen INTEGER, id_empresa INTEGER)")
     cursor.execute("CREATE TABLE IF NOT EXISTS configuracion (clave TEXT PRIMARY KEY, valor TEXT, id_empresa INTEGER)")
     #cursor.execute("CREATE TABLE IF NOT EXISTS empresas (id_empresa INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE, telefono TEXT, direccion TEXT, activo INTEGER DEFAULT 1)")
@@ -362,6 +399,25 @@ def crear_tablas():
         cursor.execute("ALTER TABLE empresas ADD COLUMN lon REAL")
     except sqlite3.OperationalError:
         pass # Ya existen
+    
+    
+    # --- BLOQUE DE MIGRACIÓN AUTOMÁTICA PARA PROMOCIONES ---
+    try:
+        # Intentamos agregar las 3 columnas una por una
+        cursor.execute("ALTER TABLE promociones ADD COLUMN es_combo_fijo INTEGER DEFAULT 0")
+        cursor.execute("ALTER TABLE promociones ADD COLUMN min_items INTEGER DEFAULT 1")
+        cursor.execute("ALTER TABLE promociones ADD COLUMN max_items INTEGER DEFAULT 1")
+        print("Columnas de Modo Combo agregadas con éxito.")
+    except sqlite3.OperationalError:
+        # Si da error es porque las columnas ya existen, así que no hacemos nada
+        pass
+    
+   
+    # En app.py, dentro de crear_tablas()
+    try:
+        cursor.execute("ALTER TABLE platos ADD COLUMN precio_oferta REAL DEFAULT NULL")
+    except:
+        pass
     
     
     conn.commit(); conn.close()
@@ -636,8 +692,16 @@ def esta_abierto(id_empresa):
     if not res or not res['horarios_json']: return True
 
     horarios = json.loads(res['horarios_json'])
-    dia_actual = datetime.now().strftime('%w')
-    ahora = datetime.now().time()
+    #dia_actual = datetime.now().strftime('%w')
+    #ahora = datetime.now().time()
+    ahora = get_now_arg().time()
+    # --- CAMBIO AQUÍ ---
+    ahora_dt = get_now_arg() 
+    dia_actual = ahora_dt.strftime('%w') # '0' a '6'
+    ahora_time = ahora_dt.time()
+    # -------------------
+
+
 
     if dia_actual in horarios and horarios[dia_actual].get('abierto'):
         # Ahora recorremos la LISTA de turnos del día
@@ -646,9 +710,9 @@ def esta_abierto(id_empresa):
             h_fin = time.fromisoformat(turno['fin'])
             
             if h_inicio <= h_fin:
-                if h_inicio <= ahora <= h_fin: return True
+                if h_inicio <= ahora_time <= h_fin: return True
             else: # Cruce de medianoche
-                if ahora >= h_inicio or ahora <= h_fin: return True
+                if ahora_time >= h_inicio or ahora_time <= h_fin: return True
     return False
 
 
@@ -745,8 +809,9 @@ def obtener_franjas_disponibles(id_empresa=None):
             # así que forzamos la localización:
             inicio_dt = ARG_TZ.localize(datetime.combine(ahora.date(), h_inicio))
             #--------------------------------------------------------------------------
-            fin_dt = datetime.combine(ahora.date(), h_fin)
-
+            #fin_dt = datetime.combine(ahora.date(), h_fin)
+            fin_dt = ARG_TZ.localize(datetime.combine(ahora.date(), h_fin))
+            
             # Manejo de cruce de medianoche
             if fin_dt <= inicio_dt:
                 fin_dt += timedelta(days=1)
@@ -891,6 +956,73 @@ def procesar_descuento_stock(id_pedido):
     conn.commit(); conn.close()
 
 
+def procesar_devolucion_stock(id_pedido):
+    """Devuelve los insumos al inventario cuando un pedido se cancela."""
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT id, id_plato, cantidad FROM items_pedido WHERE id_pedido = ?", (id_pedido,))
+    items = cursor.fetchall()
+    
+    for item in items:
+        # A. Devolución por RECETA BASE
+        cursor.execute("SELECT id_insumo, cantidad_requerida FROM recetas WHERE id_plato = ?", (item['id_plato'],))
+        for ins in cursor.fetchall():
+            total_a_devolver = ins['cantidad_requerida'] * item['cantidad']
+            cursor.execute("UPDATE insumos SET stock_actual = stock_actual + ? WHERE id_insumo = ?", (total_a_devolver, ins['id_insumo']))
+
+        # B. Devolución por MODIFICADORES/OPCIONES
+        cursor.execute("""
+            SELECT po.id_opcion FROM items_pedido_modificadores ipm
+            JOIN plato_opciones po ON ipm.nombre_opcion = po.nombre
+            WHERE ipm.id_item_pedido = ?
+        """, (item['id'],))
+        for opt in cursor.fetchall():
+            cursor.execute("SELECT id_insumo, cantidad_requerida FROM opciones_insumos WHERE id_opcion = ?", (opt['id_opcion'],))
+            for ins_o in cursor.fetchall():
+                total_o = ins_o['cantidad_requerida'] * item['cantidad']
+                cursor.execute("UPDATE insumos SET stock_actual = stock_actual + ? WHERE id_insumo = ?", (total_o, ins_o['id_insumo']))
+                
+    conn.commit(); conn.close()
+    
+ 
+ 
+@app.route('/gestion/pedido/<int:id_pedido>/cancelar', methods=['POST'])
+@login_required
+def cancelar_pedido(id_pedido):
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Obtener datos del pedido antes de cancelar
+    cursor.execute("SELECT estado_envio, id_cliente, descuento_aplicado FROM pedidos WHERE id_pedido = ?", (id_pedido,))
+    pedido = cursor.fetchone()
+    
+    if not pedido:
+        conn.close(); abort(404)
+
+    # 2. LÓGICA DE STOCK: Si el pedido ya estaba en proceso, devolvemos los ingredientes
+    if pedido['estado_envio'] in ['Recibido', 'En Preparación', 'En Camino']:
+        procesar_devolucion_stock(id_pedido)
+
+    # 3. LÓGICA DE PUNTOS: Si el cliente usó puntos, se los devolvemos
+    # (Asumiendo que 1 punto = 1 peso, ajusta según tu VALOR_PESO_POR_PUNTO_CANJE)
+    if pedido['id_cliente'] and pedido['descuento_aplicado'] > 0:
+        puntos_a_devolver = int(pedido['descuento_aplicado'] / VALOR_PESO_POR_PUNTO_CANJE)
+        cursor.execute("UPDATE clientes SET puntos = puntos + ? WHERE id_cliente = ?", 
+                       (puntos_a_devolver, pedido['id_cliente']))
+
+    # 4. Actualizamos el estado del pedido y el pago
+    cursor.execute("""
+        UPDATE pedidos 
+        SET estado_envio = 'Cancelado', 
+            estado_pago = 'Cancelado' 
+        WHERE id_pedido = ?
+    """, (id_pedido,))
+    
+    conn.commit(); conn.close()
+    
+    flash(f"Pedido #{id_pedido} cancelado. Stock y puntos revertidos.", "info")
+    return redirect(url_for('gestion_pedidos'))
+
+    
+
 def procesar_descuento_stock(id_pedido):
     """Busca los platos del pedido y descuenta sus ingredientes del inventario"""
     conn = conectar_db(); cursor = conn.cursor()
@@ -1032,13 +1164,59 @@ def panel_repartidor():
 
 
 
+@app.route('/gestion/catalogo/precios', methods=['GET', 'POST'])
+@login_required
+def gestion_precios():
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
+    
+    conn = conectar_db(); cursor = conn.cursor()
+    cid = current_user.id_empresa if not current_user.has_role('super_admin') else request.args.get('id_empresa') or DEFAULT_COMPANY_FOR_ORDERS
+
+    if request.method == 'POST':
+        accion = request.form.get('accion')
+        platos_ids = request.form.getlist('platos_seleccionados')
+
+        if not platos_ids:
+            flash("No seleccionaste ningún plato.", "warning")
+        else:
+            if accion == 'masivo':
+                porcentaje = float(request.form.get('porcentaje_masivo', 0)) / 100
+                for pid in platos_ids:
+                    # Buscamos el precio base para calcular el descuento
+                    cursor.execute("SELECT precio FROM platos WHERE id_plato = ?", (pid,))
+                    res = cursor.fetchone()
+                    if res:
+                        precio_base = res['precio']
+                        nuevo_precio = precio_base * (1 - porcentaje)
+                        cursor.execute("UPDATE platos SET precio_oferta = ? WHERE id_plato = ?", (nuevo_precio, pid))
+                flash(f"Se aplicó un {int(porcentaje*100)}% de descuento a los platos seleccionados.", "success")
+            
+            # --- LÓGICA PARA QUITAR OFERTAS Y VOLVER AL PRECIO ANTERIOR ---
+            elif accion == 'limpiar':
+                for pid in platos_ids:
+                    # Al ponerlo en NULL, el sistema vuelve a tomar el precio normal
+                    cursor.execute("UPDATE platos SET precio_oferta = NULL WHERE id_plato = ?", (pid,))
+                flash("Ofertas eliminadas. Los platos volvieron a su precio original.", "info")
+
+            conn.commit()
+        
+        return redirect(url_for('gestion_precios', id_empresa=cid))
+
+    # Cargar platos para la vista
+    cursor.execute("SELECT * FROM platos WHERE id_empresa = ? AND activo = 1 ORDER BY rubro", (cid,))
+    platos = cursor.fetchall()
+    conn.close()
+    return render_template('gestion_precios.html', platos=platos, cid=cid)
+
+
 import urllib.parse # Asegúrate de tener este import arriba
 
 @app.route('/repartidor/pedido/<int:id_pedido>/despachar', methods=['POST'])
 @login_required
 def repartidor_despachar(id_pedido):
     conn = conectar_db(); cursor = conn.cursor()
-    
+    ahora_str = get_now_iso() 
     # 1. Obtener datos necesarios
     cursor.execute("""
         SELECT p.lat_cliente, p.lon_cliente, e.lat, e.lon 
@@ -1059,7 +1237,7 @@ def repartidor_despachar(id_pedido):
             fecha_despacho = ?, 
             eta_minutos = ? 
         WHERE id_pedido = ?
-    """, (ahora, eta, id_pedido))
+    """, (ahora_str, eta, id_pedido))
     
     conn.commit(); conn.close()
     flash(f"Pedido #{id_pedido} marcado EN CAMINO. Puedes notificar al cliente ahora.", "info")
@@ -1112,6 +1290,7 @@ def calcular_totales_carrito(id_empresa):
         "envio": costo_envio,
         "total_con_envio": subtotal + costo_envio
     }
+
 
 
 @app.route('/api/validar_cupon', methods=['POST'])
@@ -1400,9 +1579,10 @@ def limpiar_cupon():
 def hacer_pedido():
     # Detectamos el ID de la empresa (sucursal) seleccionada
     cid = get_company_id_for_frontend_context()
+    ahora_arg = get_now_arg() 
     carrito = session.get('carrito', {})
     
-    # Obtenemos los datos de la empresa seleccionada
+    # 1. Obtenemos los datos de la empresa seleccionada (incluyendo horarios_json)
     conn_info = conectar_db()
     cursor_info = conn_info.cursor()
     cursor_info.execute("SELECT * FROM empresas WHERE id_empresa = ?", (cid,))
@@ -1410,25 +1590,41 @@ def hacer_pedido():
     conn_info.close()
 
     # --- INICIALIZACIÓN CLAVE ---
-    # Esta línea debe estar aquí para que siempre exista, sea GET o POST
     request_form = {} 
+    config_hoy = {'abierto': False, 'turnos': []} # Se inicializa aquí para que siempre exista
+    turnos_de_hoy = []
     # ----------------------------
 
-    
-    
-    # --- LÓGICA DE HORARIOS MULTI-TURNO ---
+    # --- LÓGICA DE HORARIOS MULTI-TURNO (CORREGIDA) ---
     abierto = esta_abierto(cid)
 
-    # NUEVO: Obtenemos los turnos específicos de HOY para mostrarlos en la vista
-    conn_h = conectar_db(); cursor_h = conn_h.cursor()
-    cursor_h.execute("SELECT horarios_json FROM empresas WHERE id_empresa = ?", (cid,))
-    res_h = cursor_h.fetchone(); conn_h.close()
-    
-    horarios_data = json.loads(res_h['horarios_json']) if res_h and res_h['horarios_json'] else {}
-    dia_hoy_str = datetime.now().strftime('%w') # 0=Dom, 1=Lun...
-    config_hoy = horarios_data.get(dia_hoy_str, {'abierto': False, 'turnos': []})
-    turnos_de_hoy = config_hoy['turnos'] # Esta variable la pasaremos al render_template al final
+    if empresa_actual and empresa_actual['horarios_json']:
+        try:
+            horarios_data = json.loads(empresa_actual['horarios_json'])
+        except:
+            horarios_data = {}
+        
+        dia_hoy_str = ahora_arg.strftime('%w') # '0' es Domingo, '1' Lunes, etc.
 
+        # Extraer la configuración según el formato guardado en DB
+        if isinstance(horarios_data, list):
+            # Formato antiguo: [["08:00", "23:00"]]
+            turnos_temp = []
+            for t in horarios_data:
+                if len(t) >= 2:
+                    turnos_temp.append({'inicio': t[0], 'fin': t[1]})
+            config_hoy = {'abierto': True, 'turnos': turnos_temp}
+            
+        elif isinstance(horarios_data, dict):
+            # Formato nuevo: {"1": {"abierto": True, "turnos": [...]}}
+            config_hoy = horarios_data.get(dia_hoy_str, {'abierto': False, 'turnos': []})
+
+    # Asignar los turnos finales para la vista con seguridad
+    if isinstance(config_hoy, dict):
+        turnos_de_hoy = config_hoy.get('turnos', [])
+    # --------------------------------------------------
+    
+    
     if request.method == 'POST':
         if not abierto:
             flash("Lo sentimos, el restaurante está cerrado actualmente.", "danger")
@@ -1459,7 +1655,15 @@ def hacer_pedido():
         fp = request.form.get('forma_pago', 'Efectivo')
         es_envio = 'es_envio_solicitado' in request.form
         
-        
+        # --- AÑADE ESTA VALIDACIÓN ---
+        if not ho or ho == "Cerrado" or ":" not in ho:
+            flash("Error: El horario de entrega seleccionado no es válido. Es posible que el local haya cerrado recientemente.", "danger")
+            return redirect(url_for('hacer_pedido'))
+        # ------------------------------
+
+        # Solo si pasa la validación, seguimos:
+        horario_entrega_completo = f"{ahora_arg.strftime('%Y-%m-%d')} {ho}:00"
+                
         
         
         
@@ -1536,7 +1740,8 @@ def hacer_pedido():
                             cursor.execute("UPDATE clientes SET puntos = puntos - ? WHERE id_cliente = ?", 
                                            (puntos_usados, id_cliente_crm))
                     else:
-                        fecha_reg = datetime.now().strftime('%Y-%m-%d')
+                        #fecha_reg = datetime.now().strftime('%Y-%m-%d')
+                        fecha_reg = get_now_arg().strftime('%Y-%m-%d') 
                         cursor.execute("""
                             INSERT INTO clientes (nombre, apellido, telefono, id_empresa, fecha_registro) 
                             VALUES (?, ?, ?, ?, ?)
@@ -1558,6 +1763,7 @@ def hacer_pedido():
                                         
                     codigo_promo = datos_cupon.get('codigo')
 
+                    # --- CÓDIGO CORREGIDO EN hacer_pedido (app.py) ---
                     cursor.execute("""
                         INSERT INTO pedidos (
                             token, cliente_nombre, cliente_apellido, direccion_entrega, es_envio, 
@@ -1565,20 +1771,25 @@ def hacer_pedido():
                             estado_pago, estado_envio, fecha_creacion, id_empresa,
                             lat_cliente, lon_cliente, id_cliente, telefono_cliente, 
                             descuento_aplicado, cupon_codigo
-                        ) VALUES (?,?,?,?,?,?,?,?,?,'Pendiente','Pendiente de WhatsApp',?,?,?,?,?,?,?,?)
+                        ) VALUES (?,?,?,?,?,?,?,?,?,'Pendiente','Pendiente',?,?,?,?,?,?,?,?)
                     """, (token_pedido, n, a, d_completa, int(es_envio), horario_entrega_completo, 
                         costo_envio_final, total_final, fp, fecha_actual_str, cid,
                         lat_cliente, lon_cliente, id_cliente_crm, tel, 
                         descuento_total_pedido, codigo_promo)) 
                                         
                     pid = cursor.lastrowid
-
                     # Guardado de items
                     for cart_key, data in carrito.items():
+                            # Detectamos de forma segura si es un plato o una promo
+                        id_plato = int(data['id_plato']) if data.get('id_plato') else None
+                        id_promocion = int(data['id_promocion']) if data.get('id_promocion') else None
+
+                        # La consulta ahora tiene 5 columnas y 5 valores (?)
                         cursor.execute("""
-                            INSERT INTO items_pedido (id_pedido, id_plato, cantidad, precio_unitario) 
-                            VALUES (?,?,?,?)
-                        """, (pid, int(data['id_plato']), data['cantidad'], data['precio_total_unitario']))
+                            INSERT INTO items_pedido (id_pedido, id_plato, id_promocion, cantidad, precio_unitario) 
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (pid, id_plato, id_promocion, data['cantidad'], data['precio_total_unitario']))
+                        
                         
                         item_id = cursor.lastrowid
                         if data.get('opciones_texto'):
@@ -1633,22 +1844,47 @@ def hacer_pedido():
                 finally:
                     conn.close()
 
-    # --- LÓGICA DE RENDERIZADO (GET) ---
+   # --- LÓGICA DE RENDERIZADO (GET) ---
     conn = conectar_db(); cursor = conn.cursor()
+    
+    # 1. Carga de platos y rubros
     cursor.execute("SELECT * FROM platos WHERE activo = 1 AND id_empresa = ?", (cid,))
     platos_db = [dict(row) for row in cursor.fetchall()]
     
-      # --- APLICACIÓN DEL PUNTO 2: VALIDACIÓN DE STOCK REAL ---
+    # --- APLICACIÓN DEL PUNTO 2: VALIDACIÓN DE STOCK REAL ---
     for plato in platos_db:
         disponible, motivo_faltante = verificar_disponibilidad_plato(plato['id_plato'])
         plato['disponible'] = disponible
         plato['motivo_faltante'] = motivo_faltante
     # ---------------------------------------------------------
     
+    # 2. Carga de cupones
     cursor.execute("SELECT * FROM cupones WHERE id_empresa = ? AND activo = 1", (cid,))
     promos_disponibles = [dict(row) for row in cursor.fetchall()]
-    conn.close()
 
+    # 3. CARGA DE PROMOCIONES (PUNTO 1 & 3)
+    # Inicializamos la variable como lista vacía para evitar el UnboundLocalError
+    promociones_db = []
+    try:
+        cursor.execute("SELECT * FROM promociones WHERE activo = 1 AND id_empresa = ?", (cid,))
+        promociones_db = [dict(row) for row in cursor.fetchall()]
+
+        for promo in promociones_db:
+            # Buscamos los nombres de los platos que integran esta promo
+            cursor.execute("""
+                SELECT p.nombre FROM platos p 
+                JOIN promocion_platos pp ON p.id_plato = pp.id_plato 
+                WHERE pp.id_promocion = ?
+            """, (promo['id_promocion'],))
+            # Guardamos los nombres como una lista: ["Pizza", "Cerveza"]
+            promo['platos_incluidos'] = [r['nombre'] for r in cursor.fetchall()]
+    except Exception as e:
+        print(f"Error cargando promos: {e}")
+        # Si falla la tabla (ej: no existe aún), promociones_db seguirá siendo []
+
+    conn.close() # Cerramos la conexión principal aquí
+
+    # 4. Cálculos de Carrito, Franjas y Sesión
     franjas = obtener_franjas_disponibles(cid)
     stats = calcular_totales_carrito(cid)
     cupon_actual = session.get('cupon_aplicado', {})
@@ -1663,9 +1899,10 @@ def hacer_pedido():
             'subtotal': v['precio_total_unitario'] * v['cantidad']
         })
 
-    # Al final de hacer_pedido en app.py
+    # 5. Obtener horarios para la vista
     horarios_para_vista = obtener_horarios_empresa(cid)
     
+    # 6. Renderizado final con todas las variables
     return render_template('hacer_pedido.html', 
                            empresa=empresa_actual,
                            platos=platos_db, 
@@ -1679,12 +1916,72 @@ def hacer_pedido():
                            cupon_actual=cupon_actual,
                            puntos_actual=puntos_actual,
                            request_form=request_form,
-                           
-                           HORARIOS_TURNOS=config_hoy['turnos'],#horarios_para_vista, 
-                           abierto=abierto)
-   
+                           HORARIOS_TURNOS=config_hoy['turnos'], #horarios_para_vista, 
+                           abierto=abierto,
+                           promociones=promociones_db) # <--- Variable garantizada
+
+
+
+@app.route('/api/cart/decrease', methods=['POST'])
+def decrease_cart_qty():
+    data = request.json
+    key = data.get('cart_key')
     
-     
+    if 'carrito' in session and key in session['carrito']:
+        # Restamos 1 a la cantidad
+        session['carrito'][key]['cantidad'] -= 1
+        
+        # Si llega a 0, eliminamos el producto del carrito
+        if session['carrito'][key]['cantidad'] <= 0:
+            del session['carrito'][key]
+            
+        session.modified = True
+        return jsonify({"success": True})
+    
+    return jsonify({"success": False, "message": "Item no encontrado"}), 404
+
+
+
+
+    
+@app.route('/api/add_promo_cart', methods=['POST'])
+def add_promo_cart():
+    data = request.json
+    promo_id = data.get('promo_id')
+    
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT * FROM promociones WHERE id_promocion = ?", (promo_id,))
+    promo = cursor.fetchone()
+    
+    if not promo:
+        return jsonify({"success": False}), 404
+
+    if 'carrito' not in session:
+        session['carrito'] = {}
+    
+    # Creamos una clave única para la promo en el carrito
+    cart_key = f"promo_{promo_id}"
+    
+    # Si ya estaba, sumamos 1, si no, la creamos
+    if cart_key in session['carrito']:
+        session['carrito'][cart_key]['cantidad'] += 1
+    else:
+        session['carrito'][cart_key] = {
+            'id_plato': None, # Importante: No es un plato único
+            'id_promocion': promo_id,
+            'nombre': f"PROMO: {promo['nombre']}",
+            'precio_total_unitario': promo['precio_total'],
+            'cantidad': 1,
+            'opciones_texto': "Combo / Promoción",
+            'notas': ""
+        }
+    
+    session.modified = True
+    conn.close()
+    return jsonify({"success": True})
+
+
+    
 import urllib.parse # <--- Añadir al inicio de app.py
 
 @app.route('/pago/resultado/<status>')
@@ -1693,7 +1990,8 @@ def pago_resultado(status):
     
     if status == 'success':
         conn = conectar_db(); cursor = conn.cursor()
-        ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        #ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        ahora = get_now_iso() # <--- CAMBIO AQUÍ
         
         # 1. Ponemos el pedido en RECIBIDO
         cursor.execute("""
@@ -1731,7 +2029,151 @@ def pago_resultado(status):
         flash("El pago no pudo procesarse.", "danger")
         return redirect(url_for('hacer_pedido'))
     
+ 
+ 
+ 
+@app.route('/gestion/promociones/agregar', methods=['GET', 'POST'])
+@login_required
+def agregar_promocion():
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
     
+    # 1. Abrimos la conexión al principio de la función
+    conn = conectar_db(); cursor = conn.cursor()
+
+    # Determinación de empresa
+    if current_user.has_role('super_admin'):
+        cid = request.args.get('id_empresa') or request.form.get('id_empresa') or DEFAULT_COMPANY_FOR_ORDERS
+    else:
+        cid = current_user.id_empresa
+
+    if request.method == 'POST':
+        nombre = request.form.get('nombre')
+        desc = request.form.get('descripcion')
+        precio = request.form.get('precio')
+        platos_ids = request.form.getlist('platos_seleccionados')
+        
+        # Captura de nuevos campos (Switch y Límites)
+        es_combo_fijo = 1 if request.form.get('es_combo_fijo') == 'on' else 0
+        min_items = int(request.form.get('min_items', 1))
+        max_items = int(request.form.get('max_items', 1))
+
+        # Lógica de imagen
+        nombre_imagen = None
+        if 'imagen' in request.files:
+            file = request.files['imagen']
+            if file and file.filename != '' and allowed_file(file.filename):
+                filename = secure_filename(file.filename)
+                timestamp = get_now_arg().strftime('%Y%m%d%H%M%S')
+                filename = f"promo_{timestamp}_{filename}"
+                file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+                nombre_imagen = filename
+
+        try:
+            # Insertamos la promo
+            cursor.execute("""
+                INSERT INTO promociones (
+                    nombre, descripcion, precio_total, id_empresa, activo, 
+                    imagen, es_combo_fijo, min_items, max_items
+                ) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?)
+            """, (nombre, desc, precio, cid, nombre_imagen, es_combo_fijo, min_items, max_items))
+            promo_id = cursor.lastrowid
+            
+            # Vinculamos platos
+            if platos_ids:
+                for p_id in platos_ids:
+                    cursor.execute("INSERT INTO promocion_platos (id_promocion, id_plato) VALUES (?, ?)", (promo_id, p_id))
+            
+            conn.commit()
+            conn.close() # Cerramos solo porque vamos a redirigir (salimos de la función)
+            flash("Promoción creada con éxito.", "success")
+            return redirect(url_for('gestion_catalogo'))
+        except Exception as e:
+            conn.rollback()
+            flash(f"Error al guardar: {e}", "danger")
+            # Si hubo error, NO cerramos la conexión aquí porque el código sigue abajo 
+            # para mostrar el formulario otra vez.
+
+    # 2. Lógica para mostrar el formulario (GET o POST fallido)
+    # Aquí es donde fallaba porque la conexión estaba cerrada
+    try:
+        cursor.execute("SELECT id_plato, nombre, precio FROM platos WHERE id_empresa = ? AND activo = 1", (cid,))
+        platos_disponibles = cursor.fetchall()
+
+        empresas = []
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+            empresas = cursor.fetchall()
+    except Exception as e:
+        print(f"Error en consulta GET: {e}")
+        platos_disponibles = []
+        empresas = []
+
+    conn.close() # Cerramos la conexión al final de todo
+    return render_template('agregar_promocion.html', 
+                           platos=platos_disponibles, 
+                           id_empresa_actual=cid,
+                           empresas_admin=empresas)
+
+@app.route('/api/promocion/<int:id_promo>/datos')
+def api_datos_promo(id_promo):
+    """
+    Devuelve los datos completos de la promo (incluyendo configuración de combo fijo)
+    y la lista de platos asociados para que el cliente elija.
+    """
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    try:
+        # 1. Buscamos toda la información de la promoción
+        cursor.execute("SELECT * FROM promociones WHERE id_promocion = ?", (id_promo,))
+        row = cursor.fetchone()
+        
+        if not row:
+            conn.close()
+            return jsonify({"success": False, "message": "Promoción no encontrada"}), 404
+        
+        # Convertimos la fila a un diccionario de Python
+        promo = dict(row)
+        
+        # --- BLOQUE DE SEGURIDAD DE TIPOS (PUNTO 2) ---
+        # Forzamos la conversión a números. En SQLite, si no hacemos esto, 
+        # los valores podrían llegar como texto y romper las comparaciones en JS.
+        promo['es_combo_fijo'] = int(promo.get('es_combo_fijo', 0))
+        promo['min_items'] = int(promo.get('min_items', 1))
+        promo['max_items'] = int(promo.get('max_items', 1))
+        promo['precio_total'] = float(promo.get('precio_total', 0))
+        # -----------------------------------------------
+        
+        # 2. Buscamos los platos que el administrador vinculó a esta promoción
+        # Nota: No traemos el precio individual de los platos para no confundir al cliente,
+        # ya que el precio que manda es el de la PROMOCIÓN.
+        cursor.execute("""
+            SELECT p.id_plato, p.nombre, p.descripcion 
+            FROM platos p 
+            JOIN promocion_platos pp ON p.id_plato = pp.id_plato 
+            WHERE pp.id_promocion = ? AND p.activo = 1
+        """, (id_promo,))
+        
+        platos = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        
+        # Retornamos los datos limpios al frontend
+        return jsonify({
+            "success": True,
+            "promo": promo, 
+            "platos": platos
+        })
+
+    except Exception as e:
+        if conn:
+            conn.close()
+        print(f"Error crítico en api_datos_promo: {e}")
+        return jsonify({"success": False, "message": str(e)}), 500
+    
+    
+    
+
 @app.route('/pedido/seguimiento/<token>')
 def seguimiento_pedido(token):
     pedido = _obtener_pedido_por_token(token)
@@ -1742,7 +2184,7 @@ def seguimiento_pedido(token):
     # Abrimos conexión para buscar datos de empresa y puntos del cliente
     conn = conectar_db(); cursor = conn.cursor()
     
-    # 1. Buscamos los datos de la empresa para el link de WhatsApp (Original)
+    # 1. Buscamos los datos de la empresa (útil para mostrar info en el seguimiento)
     cursor.execute("SELECT nombre, telefono FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
     empresa = cursor.fetchone()
 
@@ -1756,26 +2198,65 @@ def seguimiento_pedido(token):
     
     conn.close()
 
-    # 3. Lógica para el link de WhatsApp (Original)
+    # --- CAMBIO PUNTO 4: ANULACIÓN DEL LINK DE WHATSAPP DEL CLIENTE ---
+    # Forzamos la variable a None para que el botón de confirmación no aparezca
+    # en el archivo HTML del cliente.
     whatsapp_url = None
-    if pedido.estado_envio == 'Pendiente de WhatsApp' and empresa['telefono']:
-        # Preparamos el mensaje para el restaurante
-        mensaje = f"✅ *CONFIRMACIÓN DE PEDIDO #{pedido.id_pedido}*\n\n"
-        mensaje += f"Hola {empresa['nombre']}, mi nombre es {pedido.cliente_nombre}.\n"
-        mensaje += f"Confirmo mi pedido por un total de *${pedido.costo_total}*.\n\n"
-        mensaje += f"Link de seguimiento:\n{request.base_url}"
-        
-        # Limpiamos el teléfono (solo números)
-        tel_limpio = "".join(filter(str.isdigit, empresa['telefono']))
-        
-        # URL final
-        whatsapp_url = f"https://wa.me/{tel_limpio}?text={urllib.parse.quote(mensaje)}"
+    # ------------------------------------------------------------------
 
-    # Retornamos el template incluyendo la variable puntos_cliente
+    # Retornamos el template incluyendo la variable puntos_cliente, pero sin el link de WhatsApp
     return render_template('pedido_seguimiento.html', 
                            pedido=pedido, 
                            whatsapp_url=whatsapp_url, 
                            puntos_cliente=puntos_totales)
+    
+    
+    
+  #Confirmacion de cliente por wsp  
+#@app.route('/pedido/seguimiento/<token>')
+#def seguimiento_pedido(token):
+#    pedido = _obtener_pedido_por_token(token)
+#    if not pedido: 
+#        flash("Pedido no encontrado.", "danger")
+#        return redirect(url_for('index'))
+#    
+#    # Abrimos conexión para buscar datos de empresa y puntos del cliente
+#    conn = conectar_db(); cursor = conn.cursor()
+#    
+#    # 1. Buscamos los datos de la empresa para el link de WhatsApp (Original)
+#    cursor.execute("SELECT nombre, telefono FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+#    empresa = cursor.fetchone()
+#
+#    # 2. NUEVO: Buscamos los puntos acumulados del cliente (Lógica de Puntos CRM)
+#    puntos_totales = 0
+#    if pedido.id_cliente:
+#        cursor.execute("SELECT puntos FROM clientes WHERE id_cliente = ?", (pedido.id_cliente,))
+#        res_c = cursor.fetchone()
+#        if res_c:
+#            puntos_totales = res_c['puntos']
+#    
+#    conn.close()
+#
+#    # 3. Lógica para el link de WhatsApp (Original)
+#    whatsapp_url = None
+#    if pedido.estado_envio == 'Pendiente de WhatsApp' and empresa['telefono']:
+#        # Preparamos el mensaje para el restaurante
+#        mensaje = f"✅ *CONFIRMACIÓN DE PEDIDO #{pedido.id_pedido}*\n\n"
+#        mensaje += f"Hola {empresa['nombre']}, mi nombre es {pedido.cliente_nombre}.\n"
+#        mensaje += f"Confirmo mi pedido por un total de *${pedido.costo_total}*.\n\n"
+#        mensaje += f"Link de seguimiento:\n{request.base_url}"
+#        
+#        # Limpiamos el teléfono (solo números)
+#        tel_limpio = "".join(filter(str.isdigit, empresa['telefono']))
+#        
+#        # URL final
+#        whatsapp_url = f"https://wa.me/{tel_limpio}?text={urllib.parse.quote(mensaje)}"
+#
+#    # Retornamos el template incluyendo la variable puntos_cliente
+#    return render_template('pedido_seguimiento.html', 
+#                           pedido=pedido, 
+#                           whatsapp_url=whatsapp_url, 
+#                           puntos_cliente=puntos_totales)
 
 
 # Consulta de puntos
@@ -1838,6 +2319,7 @@ def gestion_pedidos():
     # --- CAPTURAR FILTROS DE LA URL ---
     f_envio = request.args.get('f_envio', '').strip()
     f_pago = request.args.get('f_pago', '').strip()
+    f_tipo = request.args.get('f_tipo', '').strip() # <--- NUEVO FILTRO
     
     # --- 1. LÓGICA DE ALERTAS DE STOCK BAJO ---
     alertas_stock = []
@@ -1867,6 +2349,7 @@ def gestion_pedidos():
         LEFT JOIN empresas e ON p.id_empresa = e.id_empresa
         WHERE date(p.horario_entrega) >= date('now', 'localtime')
     """
+    hoy_arg = get_now_arg().strftime('%Y-%m-%d')
     params = []
 
     # A. Filtro de Empresa (Seguridad Multi-sucursal)
@@ -1883,8 +2366,17 @@ def gestion_pedidos():
     if f_pago:
         base += " AND p.estado_pago = ?"
         params.append(f_pago)
+        
+        
+    # --- NUEVO: FILTRO DE TIPO DE ENTREGA ---
+    if f_tipo == '1': # Domicilio
+        base += " AND p.es_envio = 1"
+    elif f_tipo == '0': # Local
+        base += " AND p.es_envio = 0"
+    # ----------------------------------------
     # --------------------------------------------------------
 
+    
     base += """
         ORDER BY 
             CASE 
@@ -1933,73 +2425,8 @@ def gestion_pedidos():
                            repartidores=reps, 
                            alertas_stock=alertas_stock,
                            f_envio=f_envio, 
-                           f_pago=f_pago)
-       
-
-@app.route('/gestion/pedido/<int:id_pedido>/enviar_confirmacion_cliente')
-@login_required
-def enviar_confirmacion_cliente(id_pedido):
-    pedido = _obtener_pedido_completo_por_id(id_pedido)
-    if not pedido:
-        flash("Pedido no encontrado.", "danger")
-        return redirect(url_for('gestion_pedidos'))
-
-    conn = conectar_db(); cursor = conn.cursor()
-    # Traer nombre de la empresa y Alias
-    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
-    empresa = cursor.fetchone()
-    alias = cargar_configuracion('TRANSFERENCIA_ALIAS', 'No definido', pedido.id_empresa)
-    conn.close()
-
-    nombre_empresa = empresa['nombre'] if empresa else "Nuestro Local"
-
-    # 1. Construir el saludo y detalle de productos
-    mensaje = f"¡Hola *{pedido.cliente_nombre}*! 🌟\n"
-    mensaje += f"Confirmamos tu pedido *#{pedido.id_pedido}* en *{nombre_empresa}*.\n\n"
-    
-    mensaje += "📝 *Detalle de tu compra:*\n"
-    for item in pedido.items:
-        mensaje += f"- {item['cantidad']}x {item['plato_nombre']} "
-        if item['detalles']:
-            mensaje += f"(_ {item['detalles']}_)"
-        mensaje += f": ${item['precio_unitario'] * item['cantidad']}\n"
-    
-    if pedido.costo_envio > 0:
-        mensaje += f"🚚 Envío: ${pedido.costo_envio}\n"
-    
-    mensaje += f"\n💰 *TOTAL A PAGAR: ${pedido.costo_total}*\n"
-    mensaje += f"🕒 *Entrega estimada:* {pedido.horario_entrega.strftime('%H:%M')} hs\n\n"
-
-    # 2. Agregar datos de transferencia si corresponde
-   # 2. Agregar datos de pago según corresponda
-    forma_pago_limpia = pedido.forma_pago.strip().lower()
-    if forma_pago_limpia == 'Transferencia':
-        mensaje += "💳 *Datos para el pago (Transferencia):*\n"
-        mensaje += f"Por favor, realizá la transferencia al siguiente Alias y *envianos el comprobante por este medio* para comenzar con la preparación:\n\n"
-        mensaje += f"📍 *ALIAS:* {alias}\n\n"
-        
-    elif forma_pago_limpia == 'Mercado Pago':
-        mensaje += "💳 *Datos para el pago (Mercado Pago):*\n"
-        mensaje += f"Para abonar por Mercado Pago, podés enviar el dinero a nuestro Alias:\n\n"
-        mensaje += f"📍 *ALIAS:* {alias}\n\n"
-        mensaje += "⏳ *Esperamos tu pago para comenzar a cocinar...*\n\n"
-        mensaje += "_Por favor, no olvides enviarnos el comprobante._\n\n"
-        
-    else:
-        # Para Efectivo u otros medios donde ya se considera confirmado
-        mensaje += f"💳 *Forma de pago:* {pedido.forma_pago}\n"
-        mensaje += "¡Ya estamos preparando tu pedido! 👨‍🍳\n\n"
-
-    mensaje += "¡Muchas gracias por elegirnos! 😊"
-    # 3. Limpiar teléfono del cliente y generar URL
-    # Asumimos que el teléfono está guardado en el pedido
-    # Usamos el helper para asegurar formato internacional si es necesario
-    tel_cliente = "".join(filter(str.isdigit, str(pedido.telefono_cliente)))
-    if len(tel_cliente) == 10: tel_cliente = "549" + tel_cliente
-    
-    whatsapp_url = f"https://wa.me/{tel_cliente}?text={urllib.parse.quote(mensaje)}"
-    
-    return redirect(whatsapp_url)
+                           f_pago=f_pago,
+                           f_tipo=f_tipo) # <--- PASAR f_tipo AL HTML
 
 
     
@@ -2166,9 +2593,11 @@ def eliminar_ingrediente_universal(id_u, tipo):
 def reporte_rentabilidad():
     if not current_user.has_role('admin_empresa') and not current_user.has_role('super_admin'):
         abort(403)
-
-    start_date = request.args.get('start', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
-    end_date = request.args.get('end', datetime.now().strftime('%Y-%m-%d'))
+    ahora = get_now_arg()
+    start_date = request.args.get('start', (ahora - timedelta(days=30)).strftime('%Y-%m-%d'))
+    end_date = request.args.get('end', ahora.strftime('%Y-%m-%d'))
+    #start_date = request.args.get('start', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
+    #end_date = request.args.get('end', datetime.now().strftime('%Y-%m-%d'))
     cid = current_user.id_empresa if not current_user.has_role('super_admin') else request.args.get('cid')
 
     conn = conectar_db(); cursor = conn.cursor()
@@ -2371,21 +2800,35 @@ def detalle_pedido(id_pedido):
 @app.route('/gestion/pedido/<int:id_pedido>/imprimir')
 @login_required
 def imprimir_pedido(id_pedido):
+    # 1. Obtenemos el pedido completo
     pedido = _obtener_pedido_completo_por_id(id_pedido)
     if not pedido: abort(404)
     
+    # 2. Obtenemos datos de la empresa
     conn = conectar_db(); cursor = conn.cursor()
-    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+    cursor.execute("SELECT * FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
     empresa = cursor.fetchone(); conn.close()
     nombre_e = empresa['nombre'] if empresa else "Restaurante"
     
-    # Renderizamos el contenido del ticket
-    ticket_body = render_template('tickets/pedido_ticket.html', pedido=pedido, nombre_empresa=nombre_e)
+    # 3. Renderizamos las dos partes del ticket por separado
+    # (Asegúrate de haber creado estos archivos en la carpeta templates/tickets/)
+    t_cocina = render_template('tickets/pedido_ticket_cocina.html', 
+                               pedido=pedido, 
+                               nombre_empresa=nombre_e)
     
-    # Retornamos el envoltorio para la impresora
-    return render_template('tickets/imprimir_wrapper.html', ticket_body=ticket_body, id_pedido=id_pedido)
-
-
+    t_cliente = render_template('tickets/pedido_ticket_cliente.html', 
+                                pedido=pedido, 
+                                nombre_empresa=nombre_e,
+                                empresa_datos=empresa)
+    
+    # --- AQUÍ APLICAS EL CAMBIO ---
+    # Esta línea une todo y lo manda al navegador para imprimir
+    return render_template('tickets/imprimir_wrapper_dual.html', 
+                           ticket_cocina=t_cocina, 
+                           ticket_cliente=t_cliente, 
+                           id_pedido=id_pedido)
+    
+    
     
 
 # Ejemplo de cómo actualizar los estados en tus rutas de gestión:
@@ -2394,7 +2837,8 @@ def imprimir_pedido(id_pedido):
 @login_required
 def actualizar_estado_envio(id_pedido):
     nuevo_estado = request.form.get('nuevo_estado')
-    ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    ahora_str = get_now_iso()
+    #ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
     conn = conectar_db(); cursor = conn.cursor()
     
@@ -2424,7 +2868,7 @@ def actualizar_estado_envio(id_pedido):
     # 3. Actualizamos el estado del pedido
     if columna_fecha:
         cursor.execute(f"UPDATE pedidos SET estado_envio = ?, {columna_fecha} = ? WHERE id_pedido = ?", 
-                       (nuevo_estado, ahora, id_pedido))
+                       (nuevo_estado, ahora_str, id_pedido))
     else:
         cursor.execute("UPDATE pedidos SET estado_envio = ? WHERE id_pedido = ?", (nuevo_estado, id_pedido))
     
@@ -2440,104 +2884,92 @@ def actualizar_estado_envio(id_pedido):
         return redirect(url_for('panel_repartidor'))
     
     # Si es administrador o empleado del local, lo mandamos al detalle normal
-    return redirect(url_for('detalle_pedido', id_pedido=id_pedido))
+    # return redirect(url_for('detalle_pedido', id_pedido=id_pedido))
+    return redirect(url_for('gestion_pedidos')) # <--- ESTO ES LO QUE CAMBIAMOS
 
 
+
+
+# --- RUTA 1: CONFIRMACIÓN INICIAL ---
 @app.route('/gestion/pedido/<int:id_pedido>/confirmar_whatsapp', methods=['POST'])
 @login_required
 def confirmar_whatsapp(id_pedido):
-    """Confirmación de pedido con lógica de detección de pago mejorada."""
     conn = conectar_db(); cursor = conn.cursor()
     
-    # 1. Actualizamos el estado del pedido
-    cursor.execute("UPDATE pedidos SET estado_envio = 'Recibido' WHERE id_pedido = ?", (id_pedido,))
-    conn.commit(); conn.close()
+    # 1. Capturamos la hora que editaste en el panel
+    nueva_hora = request.form.get('nueva_hora')
     
-    # 2. Descuento de stock
+    # 2. ACTUALIZAMOS ESTADO A 'RECIBIDO' Y LA NUEVA HORA
+    if nueva_hora:
+        hoy = get_now_arg().strftime('%Y-%m-%d')
+        horario_final = f"{hoy} {nueva_hora}:00"
+        cursor.execute("""
+            UPDATE pedidos 
+            SET estado_envio = 'Recibido', 
+                horario_entrega = ? 
+            WHERE id_pedido = ?
+        """, (horario_final, id_pedido))
+    else:
+        # Por si no cambias la hora, solo cambiamos el estado
+        cursor.execute("UPDATE pedidos SET estado_envio = 'Recibido' WHERE id_pedido = ?", (id_pedido,))
+    
+    conn.commit(); conn.close()
+
+    # 3. AHORA SÍ: Descontamos stock (porque ya lo aceptaste)
     try:
         procesar_descuento_stock(id_pedido)
-    except: pass
+    except Exception as e:
+        print(f"Error stock: {e}")
 
-    # 3. Obtenemos el pedido completo
+    # 4. Buscamos datos para el mensaje (Usando tu lógica de Puente)
     pedido = _obtener_pedido_completo_por_id(id_pedido)
-    if not pedido:
-        return redirect(url_for('gestion_pedidos'))
-
-    # 4. Cargamos la configuración (Nombre de empresa y ALIAS)
     conn = conectar_db(); cursor = conn.cursor()
     cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
-    emp_res = cursor.fetchone()
-    nombre_empresa = emp_res['nombre'] if emp_res else "Nuestro Local"
-    
-    # IMPORTANTE: Cargamos el alias aquí arriba para que esté disponible en todos los IF
-    alias_pago = cargar_configuracion('TRANSFERENCIA_ALIAS', 'Consultar por este medio', pedido.id_empresa)
+    res_e = cursor.fetchone()
+    nombre_e = res_e['nombre'] if res_e else "Tasty Food"
+    alias = cargar_configuracion('TRANSFERENCIA_ALIAS', 'Consultar', pedido.id_empresa)
     conn.close()
 
-    # 5. --- LÓGICA DE DETECCIÓN DE PAGO (Súper segura) ---
-    # Limpiamos el texto: quitamos espacios y pasamos a minúsculas
-    metodo_pago = str(pedido.forma_pago).lower().strip()
-    
-    # 6. Construcción del mensaje
-    mensaje = f"¡Hola *{pedido.cliente_nombre}*! 🌟\n"
-    mensaje += f"Confirmamos tu pedido *#{pedido.id_pedido}* en *{nombre_empresa}*.\n\n"
-    
-    mensaje += "📝 *Detalle de tu pedido:*\n"
-    for item in pedido.items:
-        mensaje += f"- {item['cantidad']}x {item['plato_nombre']} "
-        if item['detalles']: mensaje += f"({item['detalles']}) "
-        mensaje += f": ${item['precio_unitario'] * item['cantidad']}\n"
-    
-    if pedido.costo_envio > 0:
-        mensaje += f"🚚 Envío: ${pedido.costo_envio}\n"
-    
-    mensaje += f"\n💰 *TOTAL A PAGAR: ${pedido.costo_total}*\n"
-    mensaje += f"🕒 *Hora estimada de entrega:* {pedido.horario_entrega.strftime('%H:%M')} hs\n\n"
+    tel = "".join(filter(str.isdigit, str(pedido.telefono_cliente)))
+    if len(tel) == 10: tel = "549" + tel
 
-    # --- AQUÍ ESTÁ LA CORRECCIÓN CLAVE ---
-    if "transferencia" in metodo_pago:
-        mensaje += "💳 *Datos para el pago (Transferencia):*\n"
-        mensaje += f"Por favor, realizá la transferencia al siguiente Alias y envianos el comprobante:\n\n"
-        mensaje += f"📍 *ALIAS:* {alias_pago}\n\n"
-        
-    elif "mercado" in metodo_pago or "mp" in metodo_pago:
-        # Esta línea ahora detectará "Mercado Pago", "mercadopago", "MP", etc.
-        mensaje += "💳 *Datos para el pago (Mercado Pago):*\n"
-        mensaje += f"Para abonar por Mercado Pago, podés enviar el dinero a nuestro Alias:\n\n"
-        mensaje += f"📍 *ALIAS:* {alias_pago}\n\n"
-        mensaje += "⏳ *Esperamos tu pago para comenzar a cocinar...*\n"
-        mensaje += "_Por favor, envianos el comprobante por este medio._\n\n"
-        
-    else:
-        # Para Efectivo u otros
-        mensaje += f"💳 *Forma de pago:* {pedido.forma_pago}\n"
-        mensaje += "¡Ya estamos preparando tu pedido! 👨‍🍳\n\n"
+    # 5. Enviamos al template del puente (compartir_whatsapp.html)
+    return render_template('compartir_whatsapp.html', 
+                           pedido=pedido, nombre_e=nombre_e, 
+                           alias=alias, tel=tel, tipo='confirmacion')
 
-    mensaje += "¡Muchas gracias por elegirnos! 😊"
+# --- RUTA 2: REENVÍO MANUAL (Recordatorio) ---
+@app.route('/gestion/pedido/<int:id_pedido>/enviar_confirmacion_cliente')
+@login_required
+def enviar_confirmacion_cliente(id_pedido):
+    pedido = _obtener_pedido_completo_por_id(id_pedido)
+    if not pedido:
+        flash("Pedido no encontrado.", "danger")
+        return redirect(url_for('gestion_pedidos'))
 
-    # 7. Formateo de teléfono y redirección
-    tel_limpio = "".join(filter(str.isdigit, str(pedido.telefono_cliente)))
-    if len(tel_limpio) == 10: tel_limpio = "549" + tel_limpio
+    conn = conectar_db(); cursor = conn.cursor()
+    cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (pedido.id_empresa,))
+    res_e = cursor.fetchone()
+    nombre_e = res_e['nombre'] if res_e else "Tasty"
+    alias = cargar_configuracion('TRANSFERENCIA_ALIAS', 'Consultar', pedido.id_empresa)
+    conn.close()
+
+    tel = "".join(filter(str.isdigit, str(pedido.telefono_cliente)))
+    if len(tel) == 10: tel = "549" + tel
+
+    return render_template('compartir_whatsapp.html', 
+                           pedido=pedido, nombre_e=nombre_e, 
+                           alias=alias, tel=tel, tipo='reenvio')
     
-    whatsapp_url = f"https://wa.me/{tel_limpio}?text={urllib.parse.quote(mensaje)}"
-    return redirect(whatsapp_url)
-     # --- AQUÍ ESTÁ EL TRUCO PARA LA SOLAPA NUEVA ---
-    #return render_template_string(f"""
-    #    <script>
-    #        // 1. Abrir WhatsApp en pestaña nueva
-    #        window.open("{whatsapp_url}", "_blank");
-    #        // 2. Redirigir la pestaña actual de vuelta a la gestión de pedidos
-    #        window.location.href = "{url_for('gestion_pedidos')}";
-    #    </script>
-    #    <p>Abriendo WhatsApp y actualizando pedidos...</p>
-    #""")
-
+    
 @app.route('/gestion/pedido/<int:id_pedido>/marcar_pagado', methods=['POST'])
 @login_required
 def marcar_pedido_pagado(id_pedido):
     p = _obtener_pedido_completo_por_id(id_pedido)
     conn = conectar_db(); cursor = conn.cursor(); f = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    cursor.execute("UPDATE pedidos SET estado_pago = 'Pagado', fecha_pago = ? WHERE id_pedido = ?", (f, id_pedido))
-    cursor.execute("INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_empresa) VALUES ('Ingreso', ?, ?, ?, ?, ?)", (p.costo_total, f"Pago #{id_pedido}", f, id_pedido, p.id_empresa))
+    ahora = get_now_iso() # <--- CAMBIO AQUÍ
+    cursor.execute("UPDATE pedidos SET estado_pago = 'Pagado', fecha_pago = ? WHERE id_pedido = ?", (ahora, id_pedido))
+    cursor.execute("INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_empresa) VALUES ('Ingreso', ?, ?, ?, ?, ?)", (p.costo_total, f"Pago #{id_pedido}", ahora, id_pedido, p.id_empresa))
     conn.commit(); conn.close(); return redirect(url_for('gestion_pedidos'))
 
 @app.route('/gestion/pedido/<int:id_pedido>/asignar_repartidor', methods=['POST'])
@@ -2684,7 +3116,7 @@ def reporte_repartidores():
             }
 
     conn.close()
-    return render_template('reporte_repartidores.html', repartidores=repartidores, reporte=reporte, now=datetime.now())
+    return render_template('reporte_repartidores.html', repartidores=repartidores, reporte=reporte, now=get_now_arg())
 
 
 
@@ -2722,8 +3154,9 @@ def procesar_pago_repartidor():
         # 2. OBTENEMOS LA TARIFA DE PAGO
         pago_por_viaje = get_pago_repartidor(id_empresa_pago)
         total_monto = float(len(ids_pedidos) * pago_por_viaje)
-        fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
+        #fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        fecha_hoy = get_now_iso() # <--- USA LA FUNCIÓN QUE YA TIENE EL FORMATO
+        
         # 3. Marcar los pedidos como PAGADOS
         placeholders = ','.join(['?' for _ in ids_pedidos])
         query_update = f"UPDATE pedidos SET pago_repartidor_status = 'Pagado' WHERE id_pedido IN ({placeholders})"
@@ -2765,7 +3198,8 @@ def pagar_repartidor():
     nombre_rep = request.form.get('nombre_repartidor')
     
     conn = conectar_db(); cursor = conn.cursor()
-    fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    fecha_hoy = get_now_iso()
     
     # 1. Registramos el EGRESO en la caja
     cursor.execute("""
@@ -2783,8 +3217,9 @@ def pagar_repartidor():
 @app.route('/gestion/reportes/ventas', methods=['GET', 'POST'])
 @login_required
 def reportes_ventas():
-    start = request.form.get('fecha_inicio', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
-    end = request.form.get('fecha_fin', datetime.now().strftime('%Y-%m-%d'))
+    ahora = get_now_arg() # <--- CAMBIO AQUÍ
+    start = request.form.get('fecha_inicio', (ahora - timedelta(days=30)).strftime('%Y-%m-%d'))
+    end = request.form.get('fecha_fin', ahora.strftime('%Y-%m-%d'))
     sid = request.form.get('id_empresa_reporte'); reportes = None
     if request.method == 'POST':
         reportes = _fetch_report_data(start, end, sid)
@@ -2802,7 +3237,8 @@ def arqueo_caja():
         if 'registrar_egreso' in request.form:
             monto = float(request.form.get('monto', 0))
             desc = request.form.get('descripcion')
-            fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            #fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            fecha = get_now_iso() #
             
             cursor.execute("""
                 INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_empresa) 
@@ -2816,7 +3252,8 @@ def arqueo_caja():
         elif 'registrar_ingreso' in request.form:
             monto = float(request.form.get('monto', 0))
             desc = request.form.get('descripcion') # Ej: "Apertura de caja" o "Refuerzo"
-            fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            #fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            fecha = get_now_iso() 
             cursor.execute("""
                 INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_empresa) 
                 VALUES ('Ingreso', ?, ?, ?, ?)
@@ -2864,7 +3301,7 @@ def arqueo_caja():
 
     conn.close()
     res = session.pop('arqueo_resultados', None)
-    return render_template('arqueo_caja.html', arqueo_resultados=res, now=datetime.now())
+    return render_template('arqueo_caja.html', arqueo_resultados=res, now=get_now_arg())
 
 
 
@@ -2912,17 +3349,56 @@ def gestion_configuracion():
     
     
        
+#@app.route('/gestion/usuarios')
+#@login_required
+#def gestion_usuarios():
+#    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("SELECT u.*, r.nombre_rol, e.nombre as empresa_n FROM usuarios u JOIN roles r ON u.id_rol = r.id_rol LEFT JOIN empresas e ON u.id_empresa = e.id_empresa"); usrs = cursor.fetchall(); conn.close()
+#    return render_template('gestion_usuarios.html', usuarios=usrs)
+
 @app.route('/gestion/usuarios')
 @login_required
 def gestion_usuarios():
-    conn = conectar_db(); cursor = conn.cursor(); cursor.execute("SELECT u.*, r.nombre_rol, e.nombre as empresa_n FROM usuarios u JOIN roles r ON u.id_rol = r.id_rol LEFT JOIN empresas e ON u.id_empresa = e.id_empresa"); usrs = cursor.fetchall(); conn.close()
+    # Validar acceso
+    if not current_user.has_role('super_admin', 'admin_empresa'):
+        abort(403)
+
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    if current_user.has_role('super_admin'):
+        # El super admin ve a TODOS
+        cursor.execute("""
+            SELECT u.*, r.nombre_rol, e.nombre as empresa_n 
+            FROM usuarios u 
+            JOIN roles r ON u.id_rol = r.id_rol 
+            LEFT JOIN empresas e ON u.id_empresa = e.id_empresa
+        """)
+    else:
+         # Convertimos a int por seguridad
+        cid = int(current_user.id_empresa)
+        # El admin de empresa ve solo los de su empresa y oculta al super_admin
+        cursor.execute("""
+            SELECT u.*, r.nombre_rol, e.nombre as empresa_n 
+            FROM usuarios u 
+            JOIN roles r ON u.id_rol = r.id_rol 
+            LEFT JOIN empresas e ON u.id_empresa = e.id_empresa
+            WHERE u.id_empresa = ? AND r.nombre_rol != 'super_admin'
+        """, (cid,))
+        
+    usrs = cursor.fetchall()
+    conn.close()
     return render_template('gestion_usuarios.html', usuarios=usrs)
+
+
+
+
+
 
 @app.route('/gestion/usuarios/agregar', methods=['GET', 'POST'])
 @login_required
 def agregar_usuario():
-    # Seguridad: Solo el super_admin puede crear usuarios
-    if not current_user.has_role('super_admin'):
+    # Seguridad: Ahora permitimos a super_admin Y admin_empresa
+    if not current_user.has_role('super_admin', 'admin_empresa'):
         flash("No tienes permiso para realizar esta acción.", "danger")
         return redirect(url_for('index'))
 
@@ -2938,27 +3414,29 @@ def agregar_usuario():
         nombre = request.form.get('nombre')
         apellido = request.form.get('apellido')
         id_rol = request.form.get('id_rol')
-        id_empresa = request.form.get('id_empresa')
-        # Dentro de agregar_usuario en el bloque POST:
-        telefono = request.form.get('telefono') 
         
-        # NUEVO: Capturar el ID del repartidor vinculado
+        # --- LÓGICA DE EMPRESA RESTRINGIDA ---
+        if current_user.has_role('super_admin'):
+            id_empresa = request.form.get('id_empresa')
+            if not id_empresa or id_empresa == "": id_empresa = None
+        else:
+            # Si es Admin de Empresa, forzamos el ID de su propia empresa
+            id_empresa = current_user.id_empresa
+        
+        telefono = request.form.get('telefono') 
         id_rep_vinculado = request.form.get('id_repartidor_vinculado')
         
-        # Limpiar valores vacíos
-        if not id_empresa or id_empresa == "": id_empresa = None
         if not id_rep_vinculado or id_rep_vinculado == "": id_rep_vinculado = None
 
         try:
             hp = generate_password_hash(password, method='pbkdf2:sha256')
-            # Incluimos id_repartidor_vinculado en el INSERT
             cursor.execute("""
                 INSERT INTO usuarios (email, password, nombre, apellido, id_rol, id_empresa, activo, primer_login_requerido, id_repartidor_vinculado, telefono) 
-            VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?)
             """, (email, hp, nombre, apellido, id_rol, id_empresa, id_rep_vinculado, telefono))
             
             conn.commit()
-            conn.close() # Cerramos solo si tuvo éxito y vamos a redirigir
+            conn.close() 
             flash("Usuario creado con éxito.", "success")
             return redirect(url_for('gestion_usuarios'))
             
@@ -2968,38 +3446,66 @@ def agregar_usuario():
         except Exception as e:
             conn.rollback()
             flash(f"Error al guardar: {e}", "danger")
-        # Si hubo un error, NO cerramos la conexión aquí para que el código de abajo pueda usarla
 
-    # --- LÓGICA PARA CARGAR EL FORMULARIO ---
-    # Si la conexión se cerró por error o éxito accidental, la reabrimos
+    # --- LÓGICA PARA CARGAR EL FORMULARIO (GET o re-intento) ---
     try:
-        cursor.execute("SELECT * FROM roles")
+        # Filtrar Roles
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT * FROM roles")
+        else:
+            # Un admin de empresa no puede crear un Super Admin
+            cursor.execute("SELECT * FROM roles WHERE nombre_rol != 'super_admin'")
         roles_db = cursor.fetchall()
         
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
-        empresas_db = cursor.fetchall()
+        # Filtrar Empresas
+        empresas_db = []
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+            empresas_db = cursor.fetchall()
         
-        # NUEVO: Traer repartidores activos para el selector
-        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        # Filtrar Repartidores
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        else:
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1 AND id_empresa = ?", (current_user.id_empresa,))
         repartidores_db = cursor.fetchall()
         
     except sqlite3.ProgrammingError:
-        conn = conectar_db()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM roles")
-        roles_db = cursor.fetchall()
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
-        empresas_db = cursor.fetchall()
-        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
-        repartidores_db = cursor.fetchall()
+        # Re-apertura de conexión por seguridad
+        conn = conectar_db(); cursor = conn.cursor()
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT * FROM roles")
+            roles_db = cursor.fetchall()
+            cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
+            empresas_db = cursor.fetchall()
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+            repartidores_db = cursor.fetchall()
+        else:
+            cursor.execute("SELECT * FROM roles WHERE nombre_rol != 'super_admin'")
+            roles_db = cursor.fetchall()
+            empresas_db = []
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1 AND id_empresa = ?", (current_user.id_empresa,))
+            repartidores_db = cursor.fetchall()
 
-    conn.close() # Cerramos al final de todo el proceso de carga de datos
+    # --- NUEVO: Obtener nombre de la empresa para mostrar al Admin de Sucursal ---
+    nombre_emp_aux = ""
+    if not current_user.has_role('super_admin'):
+        cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (current_user.id_empresa,))
+        res_e = cursor.fetchone()
+        nombre_emp_aux = res_e['nombre'] if res_e else "Empresa Asignada"
+    
+    current_user.empresa_nombre_aux = nombre_emp_aux # Inyectamos el nombre para el HTML
+
+    conn.close() 
 
     return render_template('agregar_usuario.html', 
                            roles=roles_db, 
                            empresas=empresas_db, 
-                           repartidores=repartidores_db, # Enviamos la lista al HTML
+                           repartidores=repartidores_db, 
                            request_form=request_form)
+    
+    
+    
     
 @app.route('/gestion/empresas')
 @login_required
@@ -3139,22 +3645,58 @@ def agregar_empresa():
 @app.route('/gestion/usuarios/editar/<int:id_usuario>', methods=['GET', 'POST'])
 @login_required
 def editar_usuario(id_usuario):
-    if not current_user.has_role('super_admin'):
+    # Seguridad: Solo super_admin o admin_empresa
+    if not current_user.has_role('super_admin', 'admin_empresa'):
         flash("No tienes permiso para editar usuarios.", "danger")
         return redirect(url_for('index'))
 
-    # Abrimos la conexión al principio
+    # Abrimos la conexión al inicio
     conn = conectar_db()
     cursor = conn.cursor()
+
+    # --- VALIDACIÓN DE SEGURIDAD PREVIA ---
+    # Necesitamos saber quién es el usuario a editar antes de procesar nada
+    cursor.execute("""
+        SELECT u.*, r.nombre_rol 
+        FROM usuarios u 
+        LEFT JOIN roles r ON u.id_rol = r.id_rol 
+        WHERE u.id_usuario = ?
+    """, (id_usuario,))
+    usuario_db = cursor.fetchone()
+
+    if not usuario_db:
+        conn.close()
+        flash("Usuario no encontrado.", "warning")
+        return redirect(url_for('gestion_usuarios'))
+
+    # Si es Admin de Empresa, verificamos que el editado sea de su sucursal y no sea un super_admin
+    if current_user.has_role('admin_empresa'):
+        if usuario_db['id_empresa'] != current_user.id_empresa:
+            conn.close()
+            flash("No tienes permiso para editar usuarios de otra sucursal.", "danger")
+            return redirect(url_for('gestion_usuarios'))
+        
+        if usuario_db['nombre_rol'] == 'super_admin':
+            conn.close()
+            flash("No puedes editar a un Super Administrador.", "danger")
+            return redirect(url_for('gestion_usuarios'))
 
     if request.method == 'POST':
         nombre = request.form.get('nombre')
         apellido = request.form.get('apellido')
         email = request.form.get('email')
         id_rol = request.form.get('id_rol')
-        id_empresa = request.form.get('id_empresa')
-        id_rep_vinculado = request.form.get('id_repartidor_vinculado')
         telefono = request.form.get('telefono')
+        id_rep_vinculado = request.form.get('id_repartidor_vinculado')
+        
+        # Lógica de Empresa (Protección)
+        if current_user.has_role('super_admin'):
+            id_empresa = request.form.get('id_empresa')
+            if not id_empresa or id_empresa == "": id_empresa = None
+        else:
+            # El Admin de Empresa no puede cambiar a nadie de sucursal
+            id_empresa = usuario_db['id_empresa']
+
         # Limpiar el valor si no se seleccionó ninguno
         if not id_rep_vinculado or id_rep_vinculado == "":
             id_rep_vinculado = None
@@ -3165,7 +3707,7 @@ def editar_usuario(id_usuario):
         try:
             cursor.execute("""
                 UPDATE usuarios 
-                SET nombre=?, apellido=?, email=?, id_rol=?, id_empresa=?, activo=?, id_repartidor_vinculado=?,telefono=?
+                SET nombre=?, apellido=?, email=?, id_rol=?, id_empresa=?, activo=?, id_repartidor_vinculado=?, telefono=?
                 WHERE id_usuario=?
             """, (nombre, apellido, email, id_rol, id_empresa, activo, id_rep_vinculado, telefono, id_usuario))
 
@@ -3181,62 +3723,132 @@ def editar_usuario(id_usuario):
         except Exception as e:
             conn.rollback() # Si hay error, volvemos atrás
             flash(f"Error al actualizar: {e}", "danger")
-            # NO cerramos la conexión aquí porque el código sigue abajo para cargar el HTML
 
     # --- LÓGICA PARA CARGAR EL FORMULARIO (GET o si el POST falló) ---
-    # Si llegamos aquí y la conexión está cerrada (por un error previo), la reabrimos
     try:
+        # 1. Recargar datos del usuario por si hubo cambios o errores
         cursor.execute("SELECT * FROM usuarios WHERE id_usuario = ?", (id_usuario,))
         usuario = cursor.fetchone()
         
-        cursor.execute("SELECT * FROM roles")
+        # 2. Filtrar Roles
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT * FROM roles")
+        else:
+            cursor.execute("SELECT * FROM roles WHERE nombre_rol != 'super_admin'")
         roles = cursor.fetchall()
         
+        # 3. Filtrar Empresas (Solo para Super Admin)
         cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
         empresas = cursor.fetchall()
 
-        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        # 4. Filtrar Repartidores
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
+        else:
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1 AND id_empresa = ?", (current_user.id_empresa,))
         repartidores_lista = cursor.fetchall()
+
     except sqlite3.ProgrammingError:
-        # Esto previene el error de "Closed Database" si el flujo falló antes
-        conn = conectar_db()
-        cursor = conn.cursor()
-        # Repetimos las consultas
+        # Reconexión de seguridad
+        conn = conectar_db(); cursor = conn.cursor()
         cursor.execute("SELECT * FROM usuarios WHERE id_usuario = ?", (id_usuario,))
         usuario = cursor.fetchone()
-        cursor.execute("SELECT * FROM roles")
-        roles = cursor.fetchall()
-        cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1")
-        empresas = cursor.fetchall()
-        cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1")
-        repartidores_lista = cursor.fetchall()
+        if current_user.has_role('super_admin'):
+            cursor.execute("SELECT * FROM roles"); roles = cursor.fetchall()
+            cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1"); empresas = cursor.fetchall()
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1"); repartidores_lista = cursor.fetchall()
+        else:
+            cursor.execute("SELECT * FROM roles WHERE nombre_rol != 'super_admin'"); roles = cursor.fetchall()
+            cursor.execute("SELECT id_empresa, nombre FROM empresas WHERE activo = 1"); empresas = cursor.fetchall()
+            cursor.execute("SELECT id_repartidor, nombre, apellido FROM repartidores WHERE activo = 1 AND id_empresa = ?", (current_user.id_empresa,))
+            repartidores_lista = cursor.fetchall()
 
-    conn.close() # Cerramos siempre al final de la función
+    # Auxiliar para mostrar el nombre de la empresa
+    nombre_emp_aux = ""
+    if not current_user.has_role('super_admin'):
+        cursor.execute("SELECT nombre FROM empresas WHERE id_empresa = ?", (current_user.id_empresa,))
+        res_e = cursor.fetchone()
+        nombre_emp_aux = res_e['nombre'] if res_e else "Sucursal"
     
-    if not usuario:
-        flash("Usuario no encontrado.", "warning")
-        return redirect(url_for('gestion_usuarios'))
+    current_user.empresa_nombre_aux = nombre_emp_aux
 
+    conn.close() 
+    
     return render_template('editar_usuario.html', 
                            usuario=usuario, 
                            roles=roles, 
                            empresas=empresas, 
                            repartidores=repartidores_lista)
-        
     
+    
+    
+    
+#@app.route('/gestion/usuarios/eliminar/<int:id_usuario>', methods=['POST'])
+#@login_required
+#def eliminar_usuario(id_usuario):
+#    if not current_user.has_role('super_admin', 'admin_empresa'):
+#        flash("No autorizado.", "danger")
+#        return redirect(url_for('index'))
+#
+#    conn = conectar_db(); cursor = conn.cursor()
+#    # Inactivación en lugar de borrado físico
+#    cursor.execute("UPDATE usuarios SET activo = 0 WHERE id_usuario = ?", (id_usuario,))
+#    conn.commit(); conn.close()
+#    flash("Usuario inactivado.", "info")
+#    return redirect(url_for('gestion_usuarios'))    
+
 @app.route('/gestion/usuarios/eliminar/<int:id_usuario>', methods=['POST'])
 @login_required
 def eliminar_usuario(id_usuario):
-    if not current_user.has_role('super_admin'):
-        flash("No autorizado.", "danger")
+    # SEGURIDAD: Permitir a Super Admin y Admin de Empresa
+    if not current_user.has_role('super_admin', 'admin_empresa'):
+        flash("No tienes permisos para realizar esta acción.", "danger")
         return redirect(url_for('index'))
 
-    conn = conectar_db(); cursor = conn.cursor()
-    # Inactivación en lugar de borrado físico
-    cursor.execute("UPDATE usuarios SET activo = 0 WHERE id_usuario = ?", (id_usuario,))
-    conn.commit(); conn.close()
-    flash("Usuario inactivado.", "info")
-    return redirect(url_for('gestion_usuarios'))    
+    conn = conectar_db()
+    cursor = conn.cursor()
+
+    # 1. Buscamos al usuario que se quiere inactivar para verificar su empresa y rol
+    cursor.execute("""
+        SELECT u.id_empresa, r.nombre_rol 
+        FROM usuarios u 
+        JOIN roles r ON u.id_rol = r.id_rol 
+        WHERE u.id_usuario = ?
+    """, (id_usuario,))
+    target_user = cursor.fetchone()
+
+    if not target_user:
+        conn.close()
+        flash("Usuario no encontrado.", "warning")
+        return redirect(url_for('gestion_usuarios'))
+
+    # 2. VALIDACIONES PARA EL ADMIN DE EMPRESA
+    if current_user.has_role('admin_empresa'):
+        # No puede inactivar usuarios de otras empresas
+        if target_user['id_empresa'] != current_user.id_empresa:
+            conn.close()
+            flash("No puedes inactivar usuarios que no pertenecen a tu sucursal.", "danger")
+            return redirect(url_for('gestion_usuarios'))
+        
+        # No puede inactivar a un Super Admin (por seguridad extra)
+        if target_user['nombre_rol'] == 'super_admin':
+            conn.close()
+            flash("No tienes permisos para inactivar a un Super Administrador.", "danger")
+            return redirect(url_for('gestion_usuarios'))
+
+    # 3. Proceder con la inactivación (Borrado Lógico)
+    try:
+        cursor.execute("UPDATE usuarios SET activo = 0 WHERE id_usuario = ?", (id_usuario,))
+        conn.commit()
+        flash("Usuario inactivado correctamente.", "info")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error al inactivar usuario: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('gestion_usuarios'))
+
 
 
 
@@ -3271,7 +3883,8 @@ def agregar_plato():
                 if file and file.filename != '' and allowed_file(file.filename):
                     filename = secure_filename(file.filename)
                     # Añadimos un timestamp para que el nombre sea único y no se sobrescriba
-                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    #timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    timestamp = get_now_arg().strftime('%Y%m%d%H%M%S')
                     filename = f"{timestamp}_{filename}"
                     file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                     nombre_imagen = filename
@@ -3349,7 +3962,8 @@ def editar_plato(id_plato):
 
                 # B. Guardar la nueva imagen
                 filename = secure_filename(file.filename)
-                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                #timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                timestamp = get_now_arg().strftime('%Y%m%d%H%M%S')
                 filename = f"{timestamp}_{filename}"
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 
@@ -3389,50 +4003,205 @@ def eliminar_plato(id_plato):
 # --- API Carrito ---
 @app.route('/api/update_cart_complex', methods=['POST'])
 def update_cart_complex():
-    data = request.json # Recibimos JSON con plato_id, cantidad, opciones y notas
-    plato_id = data.get('plato_id')
+    data = request.json
+    plato_id = data.get('plato_id') # Puede ser None si es promo
+    id_promocion = data.get('id_promocion') # Nuevo campo
     cantidad = int(data.get('cantidad', 1))
-    opciones_elegidas = data.get('opciones', []) # Lista de ids de opciones
+    opciones_elegidas = data.get('opciones', [])
     notas = data.get('notas', "").strip()
 
     if 'carrito' not in session: session['carrito'] = {}
 
-    # Generamos una clave única para esta combinación
-    # Ej: "12_opc_1_4" (Plato 12 con opciones 1 y 4)
-    opciones_key = "_".join(map(str, sorted(opciones_elegidas)))
-    cart_key = f"{plato_id}_{opciones_key}_{notas}"
+    # --- 1. GENERACIÓN DE LA CLAVE ÚNICA DEL CARRITO ---
+    if id_promocion:
+        # Clave única para la promo + la elección que hizo el cliente (guardada en notas)
+        cart_key = f"promo_{id_promocion}_{notas}" 
+    else:
+        # Clave normal para platos con sus modificadores
+        opciones_key = "_".join(map(str, sorted(opciones_elegidas)))
+        cart_key = f"{plato_id}_{opciones_key}_{notas}"
 
+    # --- 2. LÓGICA DE ELIMINACIÓN ---
     if cantidad <= 0:
         if cart_key in session['carrito']: del session['carrito'][cart_key]
     else:
         conn = conectar_db(); cursor = conn.cursor()
-        cursor.execute("SELECT nombre, precio FROM platos WHERE id_plato = ?", (plato_id,))
-        p = cursor.fetchone()
         
-        # Calcular precio extra
-        total_extra = 0
-        detalles_opciones = []
-        if opciones_elegidas:
-            placeholders = ','.join(['?' for _ in opciones_elegidas])
-            cursor.execute(f"SELECT nombre, precio_extra FROM plato_opciones WHERE id_opcion IN ({placeholders})", opciones_elegidas)
-            for opt in cursor.fetchall():
-                total_extra += opt['precio_extra']
-                detalles_opciones.append(opt['nombre'])
+        if id_promocion:
+            # --- 3. LÓGICA DE PROMO: Buscamos precio y nombre de la PROMO ---
+            cursor.execute("SELECT nombre, precio_total FROM promociones WHERE id_promocion = ?", (id_promocion,))
+            p = cursor.fetchone()
+            
+            if p:
+                nombre_item = f"PROMO: {p['nombre']}"
+                precio_final = p['precio_total']
+                # En la promo, 'detalles_texto' muestra el plato que el cliente eligió
+                detalles_texto = notas 
+            else:
+                conn.close()
+                return jsonify({"success": False, "message": "Promoción no encontrada"}), 404
+        else:
+            # --- 4. LÓGICA NORMAL (ACTUALIZADA CON PUNTO 5: PRECIO OFERTA) ---
+            # Agregamos precio_oferta a la consulta SQL
+            cursor.execute("SELECT nombre, precio, precio_oferta FROM platos WHERE id_plato = ?", (plato_id,))
+            p = cursor.fetchone()
+            
+            if p:
+                nombre_item = p['nombre']
+                
+                # DETERMINAR EL PRECIO BASE REAL (Si hay oferta válida, la usamos)
+                if p['precio_oferta'] is not None and p['precio_oferta'] > 0:
+                    precio_base_a_usar = p['precio_oferta']
+                else:
+                    precio_base_a_usar = p['precio']
+
+                total_extra = 0
+                detalles_opciones = []
+                
+                # Procesar modificadores/extras del plato (se suman al precio base de oferta o normal)
+                if opciones_elegidas:
+                    placeholders = ','.join(['?' for _ in opciones_elegidas])
+                    cursor.execute(f"SELECT nombre, precio_extra FROM plato_opciones WHERE id_opcion IN ({placeholders})", opciones_elegidas)
+                    for opt in cursor.fetchall():
+                        total_extra += opt['precio_extra']
+                        detalles_opciones.append(opt['nombre'])
+                
+                # El precio final es la base (que puede ser oferta) + los extras seleccionados
+                precio_final = precio_base_a_usar + total_extra
+                detalles_texto = ", ".join(detalles_opciones)
+            else:
+                conn.close()
+                return jsonify({"success": False, "message": "Plato no encontrado"}), 404
         
         conn.close()
 
+        # --- 5. GUARDADO EN SESIÓN ---
         session['carrito'][cart_key] = {
             'id_plato': plato_id,
-            'nombre': p['nombre'],
-            'precio_base': p['precio'],
-            'precio_total_unitario': p['precio'] + total_extra,
+            'id_promocion': id_promocion,
+            'nombre': nombre_item,
+            'precio_total_unitario': float(precio_final),
             'cantidad': cantidad,
-            'opciones_texto': ", ".join(detalles_opciones),
-            'notas': notas
+            'opciones_texto': detalles_texto,
+            'notas': notas if not id_promocion else "" # Limpiamos notas en promo para no duplicar el texto de elección
         }
     
     session.modified = True
     return jsonify({"success": True})
+
+
+
+
+# --- LISTADO DE PROMOCIONES ---
+@app.route('/gestion/promociones')
+@login_required
+def gestion_promociones():
+    if not (current_user.has_role('super_admin') or current_user.has_role('admin_empresa')):
+        abort(403)
+    
+    conn = conectar_db(); cursor = conn.cursor()
+    # Filtro por empresa
+    cond, params = get_company_filter_conditions_and_params()
+    query = "SELECT * FROM promociones"
+    if cond: query += " WHERE " + " AND ".join(cond)
+    
+    cursor.execute(query, params)
+    promos = cursor.fetchall()
+    conn.close()
+    return render_template('gestion_promociones.html', promociones=promos)
+
+# --- ELIMINAR O INACTIVAR PROMO ---
+@app.route('/gestion/promociones/eliminar/<int:id_promo>', methods=['POST'])
+@login_required
+def eliminar_promocion(id_promo):
+    conn = conectar_db(); cursor = conn.cursor()
+    # Borrado físico (puedes cambiarlo a lógico con activo=0 si prefieres)
+    try:
+        cursor.execute("DELETE FROM promocion_platos WHERE id_promocion = ?", (id_promo,))
+        cursor.execute("DELETE FROM promociones WHERE id_promocion = ?", (id_promo,))
+        conn.commit()
+        flash("Promoción eliminada correctamente.", "info")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error al eliminar: {e}", "danger")
+    finally:
+        conn.close()
+    return redirect(url_for('gestion_promociones'))
+
+# --- EDITAR PROMOCIÓN ---
+@app.route('/gestion/promociones/editar/<int:id_promo>', methods=['GET', 'POST'])
+@login_required
+def editar_promocion(id_promo):
+    conn = conectar_db(); cursor = conn.cursor()
+    
+    if request.method == 'POST':
+        nombre = request.form.get('nombre')
+        desc = request.form.get('descripcion')
+        precio = request.form.get('precio')
+        platos_ids = request.form.getlist('platos_seleccionados')
+        activo = 1 if 'activo' in request.form else 0
+
+        # --- NUEVOS CAMPOS PUNTO 1 (Captura del Switch y Límites) ---
+        # Detectamos si el switch está encendido ('on') para guardarlo como 1 o 0
+        es_combo_fijo = 1 if request.form.get('es_combo_fijo') == 'on' else 0
+        min_items = int(request.form.get('min_items', 1))
+        max_items = int(request.form.get('max_items', 1))
+        # ------------------------------------------------------------
+
+        # Lógica de imagen: mantenemos la actual o subimos una nueva
+        cursor.execute("SELECT imagen FROM promociones WHERE id_promocion = ?", (id_promo,))
+        res_img = cursor.fetchone()
+        nombre_imagen = res_img['imagen'] if res_img else None
+        
+        if 'imagen' in request.files:
+            file = request.files['imagen']
+            if file and file.filename != '' and allowed_file(file.filename):
+                filename = secure_filename(file.filename)
+                nombre_imagen = f"promo_{get_now_arg().strftime('%Y%m%d%H%M%S')}_{filename}"
+                file.save(os.path.join(app.config['UPLOAD_FOLDER'], nombre_imagen))
+
+        try:
+            # 1. Actualizar datos de la promoción incluyendo los nuevos campos de modo combo
+            cursor.execute("""
+                UPDATE promociones 
+                SET nombre=?, descripcion=?, precio_total=?, activo=?, imagen=?, 
+                    es_combo_fijo=?, min_items=?, max_items=?
+                WHERE id_promocion=?
+            """, (nombre, desc, precio, activo, nombre_imagen, es_combo_fijo, min_items, max_items, id_promo))
+            
+            # 2. Actualizar platos vinculados (Sincronización de la relación)
+            cursor.execute("DELETE FROM promocion_platos WHERE id_promocion = ?", (id_promo,))
+            for p_id in platos_ids:
+                cursor.execute("INSERT INTO promocion_platos (id_promocion, id_plato) VALUES (?, ?)", (id_promo, p_id))
+            
+            conn.commit()
+            flash("Promoción actualizada con éxito.", "success")
+            return redirect(url_for('gestion_promociones'))
+        except Exception as e:
+            conn.rollback()
+            flash(f"Error al actualizar la promoción: {e}", "danger")
+        finally:
+            conn.close()
+
+    # --- LÓGICA GET: Carga de datos para el formulario ---
+    cursor.execute("SELECT * FROM promociones WHERE id_promocion = ?", (id_promo,))
+    promo = cursor.fetchone()
+    
+    if not promo:
+        conn.close()
+        abort(404)
+    
+    # Traer todos los platos de la empresa para el selector (Solo platos activos)
+    cursor.execute("SELECT id_plato, nombre, precio FROM platos WHERE id_empresa = ? AND activo = 1", (promo['id_empresa'],))
+    platos_disponibles = cursor.fetchall()
+    
+    # Traer IDs de platos que YA están en la promo para que aparezcan marcados (checked)
+    cursor.execute("SELECT id_plato FROM promocion_platos WHERE id_promocion = ?", (id_promo,))
+    platos_actuales = [r['id_plato'] for r in cursor.fetchall()]
+    
+    conn.close()
+    return render_template('editar_promocion.html', promo=promo, platos=platos_disponibles, platos_actuales=platos_actuales)
+
 
 
 @app.route('/api/get_cart_status')
@@ -3707,36 +4476,52 @@ def _obtener_pedido_completo_por_id(id_pedido, bypass_security=False):
     p = cursor.fetchone()
     if not p: conn.close(); return None
     
-    # ACTUALIZACIÓN: Se añade id_cliente=p['id_cliente'] al constructor
+    # Construcción del objeto Pedido con todos los campos CRM
     ped = Pedido(
         id_pedido=p['id_pedido'], cliente_nombre=p['cliente_nombre'], cliente_apellido=p['cliente_apellido'], 
         direccion_entrega=p['direccion_entrega'], es_envio=p['es_envio'], horario_entrega=p['horario_entrega'], 
         costo_envio=p['costo_envio'], costo_total=p['costo_total'], forma_pago=p['forma_pago'], 
         estado_pago=p['estado_pago'], fecha_creacion=p['fecha_creacion'], lat_cliente=p['lat_cliente'], 
         lon_cliente=p['lon_cliente'], estado_envio=p['estado_envio'], id_empresa=p['id_empresa'], 
-        token=p['token'], id_cliente=p['id_cliente'],telefono_cliente=p['telefono_cliente'] # <--- Cambio aquí
+        token=p['token'], id_cliente=p['id_cliente'], telefono_cliente=p['telefono_cliente']
     )
     
-    # --- CARGA DE PRODUCTOS CON SUS MODIFICADORES --- (Se mantiene igual)
+    # --- CARGA UNIFICADA DE PLATOS Y PROMOCIONES (FIX TICKETS) ---
+    # Buscamos en ambas tablas para obtener el nombre correspondiente
     cursor.execute("""
-        SELECT ip.id, ip.id_plato, ip.cantidad, ip.precio_unitario, pl.nombre 
+        SELECT 
+            ip.id, 
+            ip.id_plato, 
+            ip.id_promocion,
+            ip.cantidad, 
+            ip.precio_unitario, 
+            pl.nombre as nombre_plato,
+            pr.nombre as nombre_promo
         FROM items_pedido ip 
-        JOIN platos pl ON ip.id_plato = pl.id_plato 
+        LEFT JOIN platos pl ON ip.id_plato = pl.id_plato 
+        LEFT JOIN promociones pr ON ip.id_promocion = pr.id_promocion
         WHERE ip.id_pedido = ?
     """, (id_pedido,))
     
     for i in cursor.fetchall(): 
-        # Buscamos los modificadores de este ítem específico
+        # Determinamos el nombre final: si no hay nombre de plato, usamos el de promo
+        nombre_item = i['nombre_plato'] if i['nombre_plato'] else i['nombre_promo']
+        
+        # Si por alguna razón ambos son NULL (no debería pasar), ponemos un texto genérico
+        if not nombre_item:
+            nombre_item = "Producto no identificado"
+
+        # Buscamos los detalles (elección del combo o extras del plato)
         cursor.execute("SELECT nombre_opcion FROM items_pedido_modificadores WHERE id_item_pedido = ?", (i['id'],))
         mods = cursor.fetchall()
-        # Los unimos en un solo texto (Ej: "A punto / Sin cebolla")
         detalle_texto = " / ".join([m['nombre_opcion'] for m in mods])
         
-        plato_data = Plato(i['id_plato'], i['nombre'], "", i['precio_unitario'])
-        ped.agregar_item(plato_data, i['cantidad'], i['precio_unitario'], detalle_texto)
+        # Agregamos el ítem al pedido pasando el nombre resuelto
+        ped.agregar_item(nombre_item, i['cantidad'], i['precio_unitario'], detalle_texto)
     
     conn.close()
     return ped
+
 
 def init_app():
     crear_tablas()

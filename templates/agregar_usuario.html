@@ -65,7 +65,24 @@
                                 {% endfor %}
                             </select>
                         </div>
-                        <div class="mb-3">
+                        
+                        <!-- SECCIÓN DE EMPRESA: Solo visible para Super Admin -->
+                        {% if current_user.has_role('super_admin') %}
+                        <div class="col-md-6 mb-3">
+                            <label for="id_empresa" class="form-label fw-bold">Empresa Asignada</label>
+                            <select class="form-select" id="id_empresa" name="id_empresa">
+                                <option value="" {{ 'selected' if not request_form.id_empresa }}>Ninguna (Solo Super Admin)</option>
+                                {% for empresa in empresas %}
+                                    <option value="{{ empresa.id_empresa }}" 
+                                        {% if request_form.id_empresa and request_form.id_empresa|int == empresa.id_empresa|int %}selected{% endif %}>
+                                        {{ empresa.nombre }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        {% endif %}
+
+                        <div class="col-12 mb-3">
                             <label for="id_repartidor_vinculado" class="form-label fw-bold text-primary">
                                 <i class="bi bi-bicycle"></i> Vincular con Repartidor Físico
                             </label>
@@ -79,18 +96,6 @@
                                 {% endfor %}
                             </select>
                             <div class="form-text">Si este usuario es un repartidor, selecciónalo aquí para que vea sus pedidos.</div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label for="id_empresa" class="form-label fw-bold">Empresa Asignada</label>
-                            <select class="form-select" id="id_empresa" name="id_empresa">
-                                <option value="" {{ 'selected' if not request_form.id_empresa }}>Ninguna (Solo Super Admin)</option>
-                                {% for empresa in empresas %}
-                                    <option value="{{ empresa.id_empresa }}" 
-                                        {% if request_form.id_empresa and request_form.id_empresa|int == empresa.id_empresa|int %}selected{% endif %}>
-                                        {{ empresa.nombre }}
-                                    </option>
-                                {% endfor %}
-                            </select>
                         </div>
                     </div>
 

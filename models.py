@@ -84,9 +84,26 @@ class Pedido:
         self.es_envio = bool(es_envio)
         
         from datetime import datetime
-        # Manejo flexible de fechas
-        self.horario_entrega = datetime.strptime(horario_entrega, '%Y-%m-%d %H:%M:%S') if isinstance(horario_entrega, str) else horario_entrega
-        self.fecha_creacion = datetime.strptime(fecha_creacion, '%Y-%m-%d %H:%M:%S') if isinstance(fecha_creacion, str) else fecha_creacion
+        
+        # --- PROCESAMIENTO ROBUSTO DE horario_entrega ---
+        if isinstance(horario_entrega, str):
+            try:
+                self.horario_entrega = datetime.strptime(horario_entrega, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                # Si el dato es inválido (ej: "Cerrado"), guardamos el string para evitar el crash
+                self.horario_entrega = horario_entrega
+        else:
+            self.horario_entrega = horario_entrega
+
+        # --- PROCESAMIENTO ROBUSTO DE fecha_creacion ---
+        if isinstance(fecha_creacion, str):
+            try:
+                self.fecha_creacion = datetime.strptime(fecha_creacion, '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                # Fallback a la hora actual si el formato de creación es inválido
+                self.fecha_creacion = datetime.now()
+        else:
+            self.fecha_creacion = fecha_creacion
         
         self.costo_envio = costo_envio
         self.costo_total = costo_total
@@ -108,50 +125,3 @@ class Pedido:
             "precio_unitario": precio_unitario,
             "detalles": detalles
         })
-
-    def agregar_item(self, plato, cantidad, precio_unitario, detalles=""):
-        nombre_plato = plato.nombre if hasattr(plato, 'nombre') else plato
-        self.items.append({
-            "plato_nombre": nombre_plato, 
-            "cantidad": cantidad, 
-            "precio_unitario": precio_unitario,
-            "detalles": detalles
-        })
-    
-    #def generar_ticket(self, nombre_empresa="Restaurante"):
-    #    items_html = ""
-    #    for item in self.items:
-    #        detalles_display = f"<br><small style='color: #444; font-style: italic;'>&nbsp;&nbsp;↳ {item['detalles']}</small>" if item['detalles'] else ""
-    #        
-    #        items_html += f"""
-    #        <tr>
-    #            <td style='padding: 5px 0; line-height: 1.2;'>
-    #                <strong>{item['cantidad']} x {item['plato_nombre']}</strong>
-    #                {detalles_display}
-    #            </td>
-    #            <td style='text-align: right; vertical-align: top;'>${item['precio_unitario'] * item['cantidad']:.2f}</td>
-    #        </tr>"""
-
-    #    ticket_html = f"""
-    #    <div style="font-family: 'Courier New', Courier, monospace; width: 300px; padding: 10px; border: 1px solid #ccc; background-color: white;">
-    #        <h3 style="text-align: center; margin: 0; text-transform: uppercase;">{nombre_empresa}</h3>
-    #        <p style="text-align: center; margin: 5px 0; font-weight: bold;">PEDIDO #{self.id_pedido}</p>
-    #        <hr style="border-top: 1px dashed #000;">
-    #        <div style="font-size: 14px;">
-    #            <p style="margin: 3px 0;"><strong>Cliente:</strong> {self.cliente_nombre} {self.cliente_apellido}</p>
-    #            <p style="margin: 3px 0;"><strong>Dirección:</strong> {self.direccion_entrega}</p>
-    #            <p style="margin: 3px 0;"><strong>Entrega:</strong> {self.horario_entrega.strftime('%H:%M')} hs</p>
-    #        </div>
-    #        <hr style="border-top: 1px dashed #000;">
-    #        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-    #            <tbody>{items_html}</tbody>
-    #        </table>
-    #        <hr style="border-top: 1px dashed #000;">
-    #        <p>Subtotal: <span style="float: right;">${(self.costo_total - self.costo_envio):.2f}</span></p>
-    #        <p>Envío: <span style="float: right;">${self.costo_envio:.2f}</span></p>
-    #        <h4 style="margin: 10px 0;">TOTAL: <span style="float: right;">${self.costo_total:.2f}</span></h4>
-    #        <hr style="border-top: 1px dashed #000;">
-    #        <p style="text-align: center;"><strong>PAGO: {self.forma_pago.upper()}</strong></p>
-    #    </div>
-    #    """
-    #    return ticket_html

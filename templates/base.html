@@ -5,137 +5,169 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <title>{% block title %}La Esquina del Sabor | App de Comidas{% endblock %}</title>
     
-    <!-- Google Fonts: Poppins para un look moderno -->
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Google Fonts: Poppins -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Iconos -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <!-- Animate.css -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css"/>
     
     <style>
         :root {
-            --primary-color: #ff4757; /* Rojo vibrante para comida */
-            --secondary-color: #2f3542;
+            --primary-color: #ff4757; 
+            --secondary-color: #ffffff;
             --accent-color: #ffa502;
-            --bg-body: #f1f2f6;
+            --dark-color: #1e1e27;
+            --glass-white: rgba(255, 255, 255, 0.98); /* Casi sólido para evitar errores en modales */
         }
 
+    
         body {
             font-family: 'Poppins', sans-serif;
-            background-color: var(--bg-body);
-            color: var(--secondary-color);
+            /* Aplicamos el fondo con el degradado y la imagen */
+            background: linear-gradient(rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0.75)), 
+                        url('/static/img/tasty_bg1.png');
+            
+            /* CONFIGURACIÓN PARA EL ANCHO Y ALTO TOTAL */
+            background-color: #000;          /* Fondo de seguridad negro */
+            background-repeat: no-repeat;    /* Evita que la imagen se duplique */
+            background-attachment: fixed;    /* Mantiene el fondo quieto al hacer scroll */
+            background-position: center center; /* Centrado absoluto para evitar desfasajes */
+            
+            /* AJUSTE EXACTO A LA PANTALLA (ANCHO Y ALTO) */
+            background-size: 100% 100%;      /* ANCHO: 100% de la pantalla, ALTO: 100% de la pantalla */
+            
+            color: #f1f2f6;
+            min-height: 100vh;
+            margin: 0;
+            padding: 0;
         }
 
-        /* Navbar Moderna */
-        .navbar {
-            background: rgba(47, 53, 66, 0.95) !important;
+        /* AJUSTE PARA MÓVILES */
+        @media (max-width: 768px) {
+            body {
+                /* En celulares también forzamos el ajuste total para que no queden huecos */
+                background-size: 100% 100%; 
+                background-position: center center;
+                /* El attachment fixed a veces da problemas en móviles, 
+                puedes cambiarlo a scroll si notas lentitud */
+                background-attachment: fixed; 
+            }
+        }
+
+        /* Navbar Moderna y mas arriba */
+         .navbar {
+            background: rgba(0, 0, 0, 0.9) !important;
             backdrop-filter: blur(10px);
-            padding: 0.8rem 1rem;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            border-bottom: 2px solid var(--primary-color);
+            padding: 0.1rem 1rem !important; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+            margin-top: 0 !important;
+            top: 0 !important;
         }
 
         .navbar-brand {
-            font-weight: 700;
-            letter-spacing: -0.5px;
+            font-weight: 800;
+            text-transform: uppercase;
             color: var(--primary-color) !important;
-            font-size: 1.5rem;
+            font-size: 1.4rem;
+            text-shadow: 0 0 10px rgba(255, 71, 87, 0.3);
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
         }
 
         .nav-link {
             font-weight: 500;
+            color: rgba(255,255,255,0.9) !important;
             transition: all 0.3s ease;
         }
 
         .nav-link:hover {
             color: var(--primary-color) !important;
-            transform: translateY(-2px);
+            transform: translateY(-1px);
         }
 
-        /* Botón de Carrito Estilizado */
+        /* Contenedor de Contenido: Sin backdrop-filter para que los modales no se bloqueen */
+        .main-container {
+            background: var(--glass-white);
+            color: var(--dark-color);
+            border-radius: 25px;
+            padding: 2rem;
+            margin-top: 1.5rem;
+            margin-bottom: 3.5rem;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.5);
+            /* IMPORTANTE: No usar backdrop-filter ni filters aquí */
+            position: relative;
+            z-index: 1;
+        }
+
         .btn-cart {
             background-color: var(--primary-color);
             color: white;
             border: none;
-            border-radius: 12px;
+            border-radius: 50px;
             padding: 8px 18px;
-            transition: all 0.3s ease;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(255, 71, 87, 0.3);
+            transition: 0.3s;
         }
 
         .btn-cart:hover {
             background-color: #ff6b81;
-            color: white;
-            box-shadow: 0 4px 15px rgba(255, 71, 87, 0.4);
+            transform: scale(1.05);
         }
 
-        /* Alertas Personalizadas */
-        .alert {
-            border: none;
-            border-radius: 15px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-        }
-
-        /* Dropdown de Administración */
         .dropdown-menu {
-            border: none;
+            background: rgba(20, 20, 20, 0.98);
+            border: 1px solid var(--primary-color);
             border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            padding: 1rem;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
 
         .dropdown-item {
-            border-radius: 8px;
-            padding: 0.6rem 1rem;
-            font-weight: 500;
-            transition: background 0.2s;
+            color: white !important;
+            padding: 0.6rem 1.2rem;
         }
 
         .dropdown-item:hover {
-            background-color: #fff1f2;
-            color: var(--primary-color);
+            background-color: var(--primary-color);
         }
 
-        /* Estilo para los Badges */
         .badge-role {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            font-size: 0.65rem;
-            text-transform: uppercase;
+            background: var(--primary-color);
+            color: white;
+            font-size: 0.6rem;
+            padding: 4px 8px;
+            border-radius: 6px;
         }
 
-        /* Animación para el mensaje de WhatsApp */
-        .text-warning {
-            color: var(--accent-color) !important;
-            text-shadow: 0 0 10px rgba(255, 165, 2, 0.3);
-        }
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-thumb { background: var(--primary-color); border-radius: 10px; }
 
-        /* Estilos para el contenedor principal */
-        .main-container {
-            min-height: 80vh;
-            padding-bottom: 3rem;
-        }
     </style>
     
-    <!-- Link al CSS original por si tienes estilos específicos allí -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
     <nav class="navbar navbar-expand-lg navbar-dark sticky-top">
         <div class="container">
             <a class="navbar-brand d-flex align-items-center" href="{{ url_for('index') }}">
-                <i class="bi bi-shop-window me-2"></i>
-                Date un Gusto y Come Rico
+                <i class="bi bi-fire me-2"></i>
+                TASTY FOOD
             </a>
             
             <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
+                <i class="bi bi-list fs-2"></i>
             </button>
             
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                    
-                    {# Lógica Corregida: Repartidor vs Cliente #}
                     {% if current_user.is_authenticated and current_user.has_role('repartidor') %}
                         <li class="nav-item">
                             <a class="nav-link fw-bold text-warning" href="{{ url_for('panel_repartidor') }}">
@@ -145,61 +177,93 @@
                     {% else %}
                         <li class="nav-item">
                             <a class="nav-link" href="{{ url_for('hacer_pedido') }}">
-                                <i class="bi bi-journal-text me-1"></i> Ver Carta
+                                <i class="bi bi-menu-button-wide me-1"></i> NUESTRA CARTA
                             </a>
                         </li>
                     {% endif %}
                     
-                    {# Administración #}
                     {% if current_user.is_authenticated and (current_user.has_role('super_admin') or current_user.has_role('admin_empresa') or current_user.has_role('empleado')) %}
                         <li class="nav-item dropdown">
+                            
+                            <li class="nav-item">
+                                <a class="nav-link fw-bold text-white" href="{{ url_for('gestion_pedidos') }}">
+                                    <i class="bi bi-list-check me-1 text-danger"></i> PEDIDOS
+                                </a>
+                            </li>
+
+                            <li class="nav-item">
+                                <a class="nav-link fw-bold text-white" href="{{ url_for('gestion_catalogo') }}">
+                                    <i class="bi bi-journal-text me-1 text-danger"></i> CATÁLOGO
+                                </a>
+                            </li>
+
+                            <li class="nav-item">
+                                <a class="nav-link fw-bold text-white" href="{{ url_for('gestion_promociones') }}">
+                                    <i class="bi bi-tags me-1 text-warning"></i> PROMOS
+                                </a>
+                            </li>
+
+
+                            <!-- NUEVO ACCESO DIRECTO: GESTOR DE PRECIOS Y OFERTAS -->
+                            
+                            <li class="nav-item">
+                                <a class="nav-link fw-bold text-white" href="{{ url_for('gestion_precios') }}">
+                                    <i class="bi bi-percent me-1 text-info"></i> OFERTAS
+                                </a>
+                            </li>
+                            
+                            
+
+                            <li class="nav-item">
+                                <a class="nav-link fw-bold text-white" href="{{ url_for('arqueo_caja') }}">
+                                    <i class="bi bi-cash-stack me-1 text-success"></i> CAJA
+                                </a>
+                            </li>
+
+
+
                             <a class="nav-link dropdown-toggle" href="#" id="navbarDropdownAdmin" role="button" data-bs-toggle="dropdown">
-                                Gestión
+                                <i class="bi bi-sliders me-1"></i> GESTIÓN
                             </a>
-                            <ul class="dropdown-menu">
-                                <li><a class="dropdown-item fw-bold text-primary" href="{{ url_for('dashboard_cocina') }}">
+                            <ul class="dropdown-menu animate__animated animate__fadeInUp">
+                                <li><a class="dropdown-item fw-bold text-info" href="{{ url_for('dashboard_cocina') }}">
                                     <i class="bi bi-egg-fried me-2"></i> COCINA
                                 </a></li>
-                                <li><a class="dropdown-item fw-bold text-danger" href="{{ url_for('panel_repartidor') }}">
-                                    <i class="bi bi-bicycle me-2"></i> REPARTO (ETA)
+                                <li><a class="dropdown-item fw-bold" href="{{ url_for('panel_repartidor') }}">
+                                    <i class="bi bi-bicycle me-2 text-warning"></i> REPARTO (ETA)
                                 </a></li>
-                                <li><hr class="dropdown-divider"></li>
+                                <li><hr class="dropdown-divider border-secondary"></li>
                                 <li><a class="dropdown-item" href="{{ url_for('gestion_pedidos') }}">
                                     <i class="bi bi-list-check me-2"></i> Pedidos
                                 </a></li>
                                 
+                                <!-- NUEVO: ACCESO A PROMOCIONES -->
+                                <li><a class="dropdown-item fw-bold text-warning" href="{{ url_for('gestion_promociones') }}">
+                                    <i class="bi bi-tags-fill me-2"></i> GESTIÓN DE PROMOS
+                                </a></li>
+
+
                                 {% if current_user.has_role('super_admin') or current_user.has_role('admin_empresa') %}
-                                    <li><a class="dropdown-item" href="{{ url_for('gestion_catalogo') }}">
-                                        <i class="bi bi-book me-2"></i> Catálogo
+                                    <li><a class="dropdown-item" href="{{ url_for('agregar_promocion') }}">
+                                        <i class="bi bi-plus-circle me-2 text-warning"></i> Nueva Promoción
                                     </a></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('gestion_insumos') }}">
-                                        <i class="bi bi-box-seam me-2 text-success"></i> Stock de MP
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('arqueo_caja') }}">
-                                        <i class="bi bi-cash-stack me-2"></i> Movimientos de Caja
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('gestion_configuracion') }}">
-                                        <i class="bi bi-gear me-2"></i> Configuración
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('gestion_cupones') }}">
-                                        <i class="bi bi-ticket-perforated me-2"></i> Gestion de Cupones
-                                    </a></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('gestion_clientes') }}">
-                                        <i class="bi bi-people me-2"></i> Clientes (CRM)
-                                    </a></li>
-                                    <li><hr class="dropdown-divider"></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('gestion_repartidores') }}">Gestion de Repartidores</a></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('reporte_repartidores') }}">Liquidaciones de Repartidores</a></li>
-                                    <li><a class="dropdown-item" href="{{ url_for('reportes_ventas') }}">Reportes de Ventas</a></li>
-                                    <li><a class="dropdown-item fw-bold text-success" href="{{ url_for('reporte_rentabilidad') }}">
-                                        <i class="bi bi-graph-up-arrow me-2"></i> Rentabilidad
-                                    </a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('gestion_catalogo') }}">Catálogo</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('gestion_insumos') }}">Stock de MP</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('arqueo_caja') }}">Movimientos de Caja</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('gestion_configuracion') }}">Configuración</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('gestion_cupones') }}">Cupones</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('gestion_clientes') }}">Clientes (CRM)</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('gestion_usuarios') }}">Usuarios</a></li>
+                                    <li><hr class="dropdown-divider border-secondary"></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('gestion_repartidores') }}">Repartidores</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('reporte_repartidores') }}">Liquidaciones</a></li>
+                                    <li><a class="dropdown-item" href="{{ url_for('reportes_ventas') }}">Ventas</a></li>
+                                    <li><a class="dropdown-item fw-bold text-success" href="{{ url_for('reporte_rentabilidad') }}">Rentabilidad</a></li>
                                 {% endif %}
                                 
                                 {% if current_user.has_role('super_admin') %}
-                                    <li><hr class="dropdown-divider"></li>
+                                    <li><hr class="dropdown-divider border-secondary"></li>
                                     <li><a class="dropdown-item text-danger" href="{{ url_for('gestion_empresas') }}">Empresas</a></li>
-                                    <li><a class="dropdown-item text-danger" href="{{ url_for('gestion_usuarios') }}">Usuarios</a></li>
                                 {% endif %}
                             </ul>
                         </li>
@@ -207,28 +271,22 @@
                 </ul>
 
                 <div class="d-flex align-items-center gap-3">
-                    {# Carrito #}
                     {% if not current_user.is_authenticated or not current_user.has_role('repartidor') %}
                     <a class="btn btn-cart position-relative" href="{{ url_for('hacer_pedido') }}">
-                        <i class="bi bi-bag-heart-fill"></i>
-                        <span id="cart-item-count" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-white text-danger d-none" style="font-size: 0.7rem;">
-                            0
-                        </span>
+                        <i class="bi bi-cart3 fs-5 me-1"></i>
+                        <span id="cart-item-count" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger border border-white d-none">0</span>
                     </a>
                     {% endif %}
 
-                    {# Login / Perfil #}
-                    <div class="d-flex gap-2">
+                    <div class="d-flex gap-2 align-items-center">
                         {% if current_user.is_authenticated %}
-                            <div class="text-white d-none d-md-block text-end">
+                            <div class="text-white d-none d-md-block text-end me-2">
                                 <div class="fw-bold small">{{ current_user.nombre }}</div>
-                                <span class="badge badge-role">{{ current_user.nombre_rol }}</span>
+                                <span class="badge-role">{{ current_user.nombre_rol }}</span>
                             </div>
-                            <a class="btn btn-outline-danger btn-sm rounded-pill px-3" href="{{ url_for('logout') }}">Salir</a>
+                            <a class="btn btn-outline-light btn-sm rounded-pill px-3" href="{{ url_for('logout') }}">Salir</a>
                         {% else %}
-                            <a class="btn btn-outline-success btn-sm rounded-pill px-4" href="{{ url_for('login') }}">
-                                <i class="bi bi-person-circle me-1"></i> Iniciar
-                            </a>
+                            <a class="btn btn-outline-success btn-sm rounded-pill px-4 fw-bold" href="{{ url_for('login') }}">INGRESAR</a>
                         {% endif %}
                     </div>
                 </div>
@@ -236,18 +294,19 @@
         </div>
     </nav>
 
-    <div class="container main-container mt-4">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}{% for category, message in messages %}
-                <div class="alert alert-{{ category }} alert-dismissible fade show border-0 shadow-sm animate__animated animate__fadeIn">
-                    <i class="bi bi-info-circle-fill me-2"></i> {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-            {% endfor %}{% endif %}
-        {% endwith %}
-        
-        <!-- Bloque de contenido principal -->
-        {% block content %}{% endblock %}
+    <div class="container">
+        <div class="main-container animate__animated animate__fadeIn">
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}{% for category, message in messages %}
+                    <div class="alert alert-{{ category }} alert-dismissible fade show border-0 shadow-sm mb-4">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                    </div>
+                {% endfor %}{% endif %}
+            {% endwith %}
+            
+            {% block content %}{% endblock %}
+        </div>
     </div>
 
     <!-- Scripts -->
