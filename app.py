@@ -1,4 +1,5 @@
 # 1. Importaciones de librerías estándar
+import mysql.connector
 import os
 import sys
 import sqlite3
@@ -91,6 +92,13 @@ login_manager.login_message_category = "warning"
 DEFAULT_ENVIO_COSTO = 500.00
 DEFAULT_PAGO_REPARTIDOR_POR_ENVIO = 300.00
 
+
+# Si estamos en PythonAnywhere usamos = ?, si no usamos ?
+if os.getenv('PYTHONANYWHERE_DOMAIN'):
+    PL = "= ?" 
+else:
+    PL = "?"
+
 # 8. Equivalencia: 1 punto = $1 peso de descuento (puedes ajustarlo)
 VALOR_PESO_POR_PUNTO_CANJE = 1.0
 
@@ -106,15 +114,42 @@ def get_now_arg():
 def get_now_iso():
     """Retorna la fecha y hora actual en string formato YYYY-MM-DD HH:MM:SS para la DB."""
     # Usamos el formato estándar de SQLite para que las comparaciones funcionen bien
-    return get_now_arg().strftime('%Y-%m-%d %H:%M:%S')
+    return get_now_arg().strftime('%Y-%m-%d %H:%M:= ?')
 
 
 # --- Funciones de Base de Datos ---
-def conectar_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row 
-    return conn
+#def conectar_db():
+#    conn = sqlite3.connect(DB_NAME)
+#    conn.row_factory = sqlite3.Row 
+#    return conn
 
+
+
+
+def conectar_db():
+    # Detectamos si la App corre en PythonAnywhere
+    if os.getenv('PYTHONANYWHERE_DOMAIN'):
+        # CONFIGURACIÓN PARA PRODUCCIÓN (MySQL)
+        conn = mysql.connector.connect(
+            host="WalterArielPelourson.mysql.pythonanywhere-services.com",
+            user="WalterArielPelourson",
+            password="TU_CONTRASEÑA_DE_DATABASE", # La que creas en el panel de PA
+            database="WalterArielPelourson$restaurante"
+        )
+        return conn
+    else:
+        # CONFIGURACIÓN PARA TU PC (SQLite)
+        conn = sqlite3.connect(DB_NAME)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+# NUEVA FUNCIÓN: Úsala siempre para obtener el cursor
+def obtener_cursor(conn):
+    if os.getenv('PYTHONANYWHERE_DOMAIN'):
+        # En MySQL, dictionary=True hace que funcione igual que Row de SQLite
+        return conn.cursor(dictionary=True)
+    else:
+        return conn.cursor()
 
 
 def crear_tablas():
@@ -425,22 +460,58 @@ def crear_tablas():
 
 
 
+#@login_manager.user_loader
+##def load_user(user_id):
+#    conn = conectar_db(); cursor = conn.cursor()
+#    # Usamos LEFT JOIN para asegurar que traiga el nombre del rol
+#    cursor.execute("""
+#        SELECT u.*, r.nombre_rol 
+#        FROM usuarios u 
+#        LEFT JOIN roles r ON u.id_rol = r.id_rol 
+#        WHERE u.id_usuario = ?
+#    """, (user_id,))
+#    u = cursor.fetchone(); conn.close()
+#    
+#    if u: 
+#        # Si por alguna razón nombre_rol es None, le asignamos un string vacío para evitar errores
+#        n_rol = u['nombre_rol'] if u['nombre_rol'] else ""
+#        
+#        return Usuario(
+#            id_usuario=u['id_usuario'], 
+#            email=u['email'], 
+#            password=u['password'], 
+#            nombre=u['nombre'], 
+#            apellido=u['apellido'], 
+#            id_rol=u['id_rol'], 
+#            id_empresa=u['id_empresa'], 
+#            activo=u['activo'], 
+#            primer_login_requerido=u['primer_login_requerido'], 
+#            nombre_rol=n_rol, # <--- IMPORTANTE
+#            id_repartidor_vinculado=u['id_repartidor_vinculado'],
+#            telefono=u['telefono']
+#        )
+#    return None
+
 @login_manager.user_loader
 def load_user(user_id):
-    conn = conectar_db(); cursor = conn.cursor()
-    # Usamos LEFT JOIN para asegurar que traiga el nombre del rol
-    cursor.execute("""
+    conn = conectar_db()
+    cursor = conn.cursor()
+    
+    # Usamos f-string para meter la variable PL ({PL})
+    query = f"""
         SELECT u.*, r.nombre_rol 
         FROM usuarios u 
         LEFT JOIN roles r ON u.id_rol = r.id_rol 
-        WHERE u.id_usuario = ?
-    """, (user_id,))
-    u = cursor.fetchone(); conn.close()
+        WHERE u.id_usuario = {PL}
+    """
+    
+    cursor.execute(query, (user_id,))
+    u = cursor.fetchone()
+    conn.close()
     
     if u: 
-        # Si por alguna razón nombre_rol es None, le asignamos un string vacío para evitar errores
+        # Aseguramos que u sea un diccionario (para MySQL) o un Row (para SQLite)
         n_rol = u['nombre_rol'] if u['nombre_rol'] else ""
-        
         return Usuario(
             id_usuario=u['id_usuario'], 
             email=u['email'], 
@@ -451,11 +522,13 @@ def load_user(user_id):
             id_empresa=u['id_empresa'], 
             activo=u['activo'], 
             primer_login_requerido=u['primer_login_requerido'], 
-            nombre_rol=n_rol, # <--- IMPORTANTE
+            nombre_rol=n_rol,
             id_repartidor_vinculado=u['id_repartidor_vinculado'],
             telefono=u['telefono']
         )
     return None
+
+
 
 
 def verificar_disponibilidad_plato(id_plato, cantidad_solicitada=1):
@@ -825,7 +898,7 @@ def obtener_franjas_disponibles(id_empresa=None):
 
             while actual <= fin_dt:
                 hora_str = actual.strftime("%H:%M")
-                fecha_hora_db = actual.strftime("%Y-%m-%d %H:%M:%S")
+                fecha_hora_db = actual.strftime("%Y-%m-%d %H:%M:= ?")
                 
                 cursor.execute("""
                     SELECT COUNT(*) FROM pedidos 
@@ -1230,7 +1303,7 @@ def repartidor_despachar(id_pedido):
     eta = calcular_tiempo_ruta_osrm(data['lat'], data['lon'], data['lat_cliente'], data['lon_cliente'])
     
     # 3. Actualizar estado a 'En Camino' y guardar el ETA
-    ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    ahora = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
     cursor.execute("""
         UPDATE pedidos 
         SET estado_envio = 'En Camino', 
@@ -1749,12 +1822,12 @@ def hacer_pedido():
                         id_cliente_crm = cursor.lastrowid
                     # ----------------------------------------------------------------------------------
 
-                    #fecha_actual_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    #fecha_actual_str = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
                     #horario_entrega_completo = f"{datetime.now().strftime('%Y-%m-%d')} {ho}:00"
 
                     # --- REEMPLÁZALO POR ESTO ---
                     ahora_arg = get_now_arg()
-                    fecha_actual_str = ahora_arg.strftime('%Y-%m-%d %H:%M:%S')
+                    fecha_actual_str = ahora_arg.strftime('%Y-%m-%d %H:%M:= ?')
 
                     # Para el horario de entrega, usamos la fecha de hoy en Argentina + el horario elegido
                     horario_entrega_completo = f"{ahora_arg.strftime('%Y-%m-%d')} {ho}:00"
@@ -1990,7 +2063,7 @@ def pago_resultado(status):
     
     if status == 'success':
         conn = conectar_db(); cursor = conn.cursor()
-        #ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        #ahora = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
         ahora = get_now_iso() # <--- CAMBIO AQUÍ
         
         # 1. Ponemos el pedido en RECIBIDO
@@ -2064,7 +2137,7 @@ def agregar_promocion():
             file = request.files['imagen']
             if file and file.filename != '' and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                timestamp = get_now_arg().strftime('%Y%m%d%H%M%S')
+                timestamp = get_now_arg().strftime('%Y%m%d%H%M= ?')
                 filename = f"promo_{timestamp}_{filename}"
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 nombre_imagen = filename
@@ -2394,7 +2467,7 @@ def gestion_pedidos():
     for r in resultados:
         p = dict(r)
         try:
-            p['horario_entrega_dt'] = datetime.strptime(p['horario_entrega'], '%Y-%m-%d %H:%M:%S')
+            p['horario_entrega_dt'] = datetime.strptime(p['horario_entrega'], '%Y-%m-%d %H:%M:= ?')
         except:
             p['horario_entrega_dt'] = None
         pedidos_p.append(p)
@@ -2838,7 +2911,7 @@ def imprimir_pedido(id_pedido):
 def actualizar_estado_envio(id_pedido):
     nuevo_estado = request.form.get('nuevo_estado')
     ahora_str = get_now_iso()
-    #ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #ahora = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
     
     conn = conectar_db(); cursor = conn.cursor()
     
@@ -2966,7 +3039,7 @@ def enviar_confirmacion_cliente(id_pedido):
 @login_required
 def marcar_pedido_pagado(id_pedido):
     p = _obtener_pedido_completo_por_id(id_pedido)
-    conn = conectar_db(); cursor = conn.cursor(); f = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn = conectar_db(); cursor = conn.cursor(); f = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
     ahora = get_now_iso() # <--- CAMBIO AQUÍ
     cursor.execute("UPDATE pedidos SET estado_pago = 'Pagado', fecha_pago = ? WHERE id_pedido = ?", (ahora, id_pedido))
     cursor.execute("INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_pedido_origen, id_empresa) VALUES ('Ingreso', ?, ?, ?, ?, ?)", (p.costo_total, f"Pago #{id_pedido}", ahora, id_pedido, p.id_empresa))
@@ -3154,7 +3227,7 @@ def procesar_pago_repartidor():
         # 2. OBTENEMOS LA TARIFA DE PAGO
         pago_por_viaje = get_pago_repartidor(id_empresa_pago)
         total_monto = float(len(ids_pedidos) * pago_por_viaje)
-        #fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        #fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
         fecha_hoy = get_now_iso() # <--- USA LA FUNCIÓN QUE YA TIENE EL FORMATO
         
         # 3. Marcar los pedidos como PAGADOS
@@ -3198,7 +3271,7 @@ def pagar_repartidor():
     nombre_rep = request.form.get('nombre_repartidor')
     
     conn = conectar_db(); cursor = conn.cursor()
-    #fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    #fecha_hoy = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
     fecha_hoy = get_now_iso()
     
     # 1. Registramos el EGRESO en la caja
@@ -3237,7 +3310,7 @@ def arqueo_caja():
         if 'registrar_egreso' in request.form:
             monto = float(request.form.get('monto', 0))
             desc = request.form.get('descripcion')
-            #fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            #fecha = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
             fecha = get_now_iso() #
             
             cursor.execute("""
@@ -3252,7 +3325,7 @@ def arqueo_caja():
         elif 'registrar_ingreso' in request.form:
             monto = float(request.form.get('monto', 0))
             desc = request.form.get('descripcion') # Ej: "Apertura de caja" o "Refuerzo"
-            #fecha = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            #fecha = datetime.now().strftime('%Y-%m-%d %H:%M:= ?')
             fecha = get_now_iso() 
             cursor.execute("""
                 INSERT INTO ingresos_egresos (tipo, monto, descripcion, fecha_hora, id_empresa) 
@@ -3883,8 +3956,8 @@ def agregar_plato():
                 if file and file.filename != '' and allowed_file(file.filename):
                     filename = secure_filename(file.filename)
                     # Añadimos un timestamp para que el nombre sea único y no se sobrescriba
-                    #timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-                    timestamp = get_now_arg().strftime('%Y%m%d%H%M%S')
+                    #timestamp = datetime.now().strftime('%Y%m%d%H%M= ?')
+                    timestamp = get_now_arg().strftime('%Y%m%d%H%M= ?')
                     filename = f"{timestamp}_{filename}"
                     file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                     nombre_imagen = filename
@@ -3962,8 +4035,8 @@ def editar_plato(id_plato):
 
                 # B. Guardar la nueva imagen
                 filename = secure_filename(file.filename)
-                #timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-                timestamp = get_now_arg().strftime('%Y%m%d%H%M%S')
+                #timestamp = datetime.now().strftime('%Y%m%d%H%M= ?')
+                timestamp = get_now_arg().strftime('%Y%m%d%H%M= ?')
                 filename = f"{timestamp}_{filename}"
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 
@@ -4157,7 +4230,7 @@ def editar_promocion(id_promo):
             file = request.files['imagen']
             if file and file.filename != '' and allowed_file(file.filename):
                 filename = secure_filename(file.filename)
-                nombre_imagen = f"promo_{get_now_arg().strftime('%Y%m%d%H%M%S')}_{filename}"
+                nombre_imagen = f"promo_{get_now_arg().strftime('%Y%m%d%H%M= ?')}_{filename}"
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], nombre_imagen))
 
         try:

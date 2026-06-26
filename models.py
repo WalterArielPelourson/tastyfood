@@ -88,10 +88,16 @@ class Pedido:
         # --- PROCESAMIENTO ROBUSTO DE horario_entrega ---
         if isinstance(horario_entrega, str):
             try:
+                # Intentamos el formato estándar con segundos
                 self.horario_entrega = datetime.strptime(horario_entrega, '%Y-%m-%d %H:%M:%S')
             except ValueError:
-                # Si el dato es inválido (ej: "Cerrado"), guardamos el string para evitar el crash
-                self.horario_entrega = horario_entrega
+                try:
+                    # Intentamos el formato sin segundos
+                    self.horario_entrega = datetime.strptime(horario_entrega, '%Y-%m-%d %H:%M')
+                except ValueError:
+                    # Si el dato es "Cerrado" o cualquier texto no válido, lo dejamos como string
+                    # El HTML deberá manejar esto con un {% if %}
+                    self.horario_entrega = horario_entrega
         else:
             self.horario_entrega = horario_entrega
 
@@ -100,8 +106,11 @@ class Pedido:
             try:
                 self.fecha_creacion = datetime.strptime(fecha_creacion, '%Y-%m-%d %H:%M:%S')
             except ValueError:
-                # Fallback a la hora actual si el formato de creación es inválido
-                self.fecha_creacion = datetime.now()
+                try:
+                    self.fecha_creacion = datetime.strptime(fecha_creacion, '%Y-%m-%d %H:%M')
+                except ValueError:
+                    # Fallback a la hora actual si el formato de creación es totalmente inválido
+                    self.fecha_creacion = datetime.now()
         else:
             self.fecha_creacion = fecha_creacion
         
@@ -117,6 +126,10 @@ class Pedido:
         self.fecha_pago = fecha_pago
         self.items = []
 
+ 
+        
+        
+        
     def agregar_item(self, plato, cantidad, precio_unitario, detalles=""):
         nombre_plato = plato.nombre if hasattr(plato, 'nombre') else plato
         self.items.append({

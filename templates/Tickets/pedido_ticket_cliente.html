@@ -1,20 +1,41 @@
-<div style="width: 100%; font-family: 'Courier New', Courier, monospace; color: #000;">
-    <div style="text-align: center;">
-        <span style="font-size: 1.3rem; font-weight: bold; text-transform: uppercase;">{{ nombre_empresa }}</span><br>
-        <small>{{ empresa_datos.direccion }}</small><br>
-        <small>Tel: {{ empresa_datos.telefono }}</small>
+<div style="width: 100%; font-family: 'Courier New', Courier, monospace; color: #000; font-size: 13px;">
+    <!-- LOGO Y EMPRESA -->
+    <div style="text-align: center; margin-bottom: 10px;">
+        <img src="/static/img/tasty_bg1.png" style="max-width: 100px; height: auto; margin-bottom: 5px;"><br>
+        <span style="font-size: 1.4rem; font-weight: bold; text-transform: uppercase;">{{ nombre_empresa }}</span><br>
     </div>
 
-    <div style="border-top: 1px solid #000; margin-top: 10px; padding-top: 5px;">
-        <strong>RECIBO DE PEDIDO #{{ pedido.id_pedido }}</strong><br>
-        Fecha: {{ pedido.fecha_creacion.strftime('%d/%m/%Y %H:%M') }} hs<br>
-        Cliente: {{ pedido.cliente_nombre }}<br>
+    <div style="text-align: center; border-top: 2px solid #000; border-bottom: 2px solid #000; padding: 5px 0; margin-bottom: 10px;">
+        <span style="font-size: 1.2rem; font-weight: bold;">CONTROL DE PEDIDO</span>
+    </div>
+
+    <!-- DATOS DEL PEDIDO -->
+    <div style="margin-bottom: 10px;">
+        <strong>PEDIDO:</strong> #{{ pedido.id_pedido }}<br>
+        <strong>EMISIÓN:</strong> {{ pedido.fecha_creacion.strftime('%d/%m/%Y %H:%M') }}<br>
+        <strong>ENTREGA ESTIMADA:</strong> 
+        {% if pedido.horario_entrega.strftime %}
+            {{ pedido.horario_entrega.strftime('%H:%M') }} hs
+        {% else %}
+            {{ pedido.horario_entrega }}
+        {% endif %}
+        <strong>MODO:</strong> {{ 'DELIVERY' if pedido.es_envio else 'RETIRA EN LOCAL' }}
+    </div>
+
+    <!-- DATOS DEL CLIENTE -->
+    <div style="border-top: 1px dashed #000; padding-top: 5px; margin-bottom: 10px;">
+        <span style="font-weight: bold; text-decoration: underline;">DATOS DEL CLIENTE:</span><br>
+        <strong>Nombre:</strong> {{ pedido.cliente_nombre }} {{ pedido.cliente_apellido }}<br>
+        <strong>Teléfono:</strong> {{ pedido.telefono_cliente }}<br>
         {% if pedido.es_envio %}
-            Dir: {{ pedido.direccion_entrega }}
+            <strong>Dirección:</strong> {{ pedido.direccion_entrega }}
+        {% else %}
+            <strong>Entrega:</strong> Retira en Local
         {% endif %}
     </div>
 
-    <table style="width: 100%; margin-top: 10px; border-bottom: 1px solid #000;">
+    <!-- DETALLE DE COMPRA -->
+    <table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">
         <thead>
             <tr style="border-bottom: 1px solid #000;">
                 <th align="left">DESCRIPCIÓN</th>
@@ -24,41 +45,50 @@
         <tbody>
             {% for item in pedido.items %}
             <tr>
-                <td style="padding: 5px 0; line-height: 1.2;">
-                    <strong>{{ item.cantidad }}x {{ item.plato_nombre }}</strong>
-                    {# --- CAMBIO CLAVE: Muestra el desglose del combo o extras del plato --- #}
+                <td style="padding: 4px 0;">
+                    {{ item.cantidad }}x {{ item.plato_nombre }}
                     {% if item.detalles %}
-                        <br><small style="font-size: 0.85rem;">&nbsp;&nbsp;↳ {{ item.detalles }}</small>
+                        <br><small style="font-size: 11px; color: #333;">&nbsp;&nbsp;↳ {{ item.detalles }}</small>
                     {% endif %}
                 </td>
-                <td align="right" style="vertical-align: top;">
-                    ${{ "{:,.2f}".format(item.precio_unitario * item.cantidad) }}
-                </td>
+                <td align="right" style="vertical-align: top;">${{ "{:,.2f}".format(item.precio_unitario * item.cantidad) }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 
-    <table style="width: 100%; margin-top: 5px; font-weight: bold;">
-        <tr>
-            <td align="right">SUBTOTAL:</td>
-            <td align="right" style="width: 30%;">${{ "{:,.2f}".format(pedido.costo_total - pedido.costo_envio) }}</td>
-        </tr>
-        {% if pedido.costo_envio > 0 %}
-        <tr>
-            <td align="right">ENVÍO:</td>
-            <td align="right">${{ "{:,.2f}".format(pedido.costo_envio) }}</td>
-        </tr>
-        {% endif %}
-        <tr>
-            <td align="right" style="font-size: 1.1rem;">TOTAL A PAGAR:</td>
-            <td align="right" style="font-size: 1.1rem;">${{ "{:,.2f}".format(pedido.costo_total) }}</td>
-        </tr>
-    </table>
+    <!-- TOTALES -->
+    <div style="border-top: 1px solid #000; padding-top: 5px;">
+        <table style="width: 100%; font-weight: bold;">
+            <tr>
+                <td align="right">SUBTOTAL:</td>
+                <td align="right" style="width: 35%;">${{ "{:,.2f}".format(pedido.costo_total - pedido.costo_envio) }}</td>
+            </tr>
+            {% if pedido.costo_envio > 0 %}
+            <tr>
+                <td align="right">ENVÍO:</td>
+                <td align="right">${{ "{:,.2f}".format(pedido.costo_envio) }}</td>
+            </tr>
+            {% endif %}
+            <tr style="font-size: 1.1rem;">
+                <td align="right">TOTAL FINAL:</td>
+                <td align="right">${{ "{:,.2f}".format(pedido.costo_total) }}</td>
+            </tr>
+        </table>
+    </div>
 
-    <div style="text-align: center; margin-top: 15px; border-top: 1px dashed #000; padding-top: 10px;">
-        <span style="font-weight: bold; font-size: 1.1rem;">PAGO: {{ pedido.forma_pago | upper }}</span><br>
+    <!-- PAGO Y ESTADO -->
+    <div style="margin-top: 10px; padding: 8px; border: 1px solid #000; text-align: center;">
+        <strong>FORMA DE PAGO:</strong> {{ pedido.forma_pago | upper }}<br>
+        <strong>ESTADO:</strong> {{ pedido.estado_pago | upper }}
+    </div>
+
+    <!-- PIE DE PÁGINA -->
+    <div style="text-align: center; margin-top: 20px; font-size: 11px;">
+        <strong>DOCUMENTO NO VÁLIDO COMO FACTURA</strong><br>
         <br>
-        ¡Muchas gracias por elegirnos!
+        ¡Muchas gracias por su compra!<br>
+        --------------------------------<br>
+        Software desarrollado por <strong>Novarix</strong>
     </div>
 </div>
